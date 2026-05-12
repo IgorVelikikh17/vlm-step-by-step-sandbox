@@ -1,0 +1,15 @@
+role: teacher
+model_key: qwen2_5_vl_7b_awq
+pretrained_name: Qwen/Qwen2.5-VL-7B-Instruct-AWQ
+fallback_pretrained_name: Qwen/Qwen2.5-VL-3B-Instruct
+
+max_new_tokens: 256
+torch_dtype: auto
+device_map: auto
+
+generation:
+  temperature: 0.2
+  top_p: 0.9
+  do_sample: false
+
+teacher_cache_path: artifacts/teacher_scienceqa_image_rationales_debug.jsonl

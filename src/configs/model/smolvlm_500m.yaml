@@ -1,0 +1,15 @@
+role: student
+model_key: smolvlm_500m
+pretrained_name: HuggingFaceTB/SmolVLM-500M-Instruct
+
+max_new_tokens: 128
+torch_dtype: auto
+device_map: auto
+
+train:
+  enabled: false
+  learning_rate: 2.0e-5
+  batch_size: 1
+  num_train_epochs: 1
+  gradient_accumulation_steps: 8
+  output_dir: checkpoints/smolvlm_500m

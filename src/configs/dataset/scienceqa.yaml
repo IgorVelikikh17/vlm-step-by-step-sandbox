@@ -1,0 +1,18 @@
+name: scienceqa
+hf_name: derek-thomas/ScienceQA
+subset: null
+
+train_split: train
+eval_split: validation
+
+image_column: image
+question_column: question
+choices_column: choices
+answer_column: answer
+hint_column: hint
+lecture_column: lecture
+solution_column: solution
+
+only_with_image: true
+max_train_samples: null
+max_eval_samples: null
