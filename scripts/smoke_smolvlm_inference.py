@@ -61,7 +61,10 @@ def main() -> None:
         max_samples=args.max_samples,
     )
 
-    model_name = args.model_name or model_config.get("pretrained_name", "HuggingFaceTB/SmolVLM-500M-Instruct")
+    model_name = resolve_model_name_or_path(
+        ROOT,
+        args.model_name or model_config.get("pretrained_name", "HuggingFaceTB/SmolVLM-500M-Instruct"),
+    )
     print(f"config path: {ROOT / args.config}")
     print(f"model config path: {ROOT / args.model_config}")
     print(f"teacher cache path: {teacher_cache_path}")
@@ -74,6 +77,9 @@ def main() -> None:
     if args.dry_run:
         _print_dry_run_rows(student_rows)
         return
+
+    if is_local_model_path(args.model_name) and not Path(model_name).exists():
+        raise FileNotFoundError(f"Local model checkpoint does not exist: {model_name}")
 
     model, processor = load_smolvlm(
         model_name=model_name,
@@ -104,6 +110,7 @@ def main() -> None:
         print("raw model output:")
         print(raw_output)
         print(f"parsed model answer: {parsed_answer}")
+        print(f"is_correct: {parsed_answer == row['gold_answer']}")
 
 
 def _print_dry_run_rows(rows: list[dict]) -> None:
@@ -119,6 +126,30 @@ def _print_dry_run_rows(rows: list[dict]) -> None:
         print(row["prompt"])
         print("target:")
         print(row["target"])
+
+
+def resolve_model_name_or_path(root: Path, model_name: str) -> str:
+    model_path = Path(model_name)
+    if model_path.is_absolute():
+        return str(model_path)
+
+    if model_path.parts and model_path.parts[0] in [".", "..", "outputs", "checkpoints", "artifacts"]:
+        return str(root / model_path)
+
+    candidate = root / model_path
+    if candidate.exists():
+        return str(candidate)
+
+    return model_name
+
+
+def is_local_model_path(model_name: str | None) -> bool:
+    if model_name is None:
+        return False
+    model_path = Path(model_name)
+    if model_path.is_absolute():
+        return True
+    return bool(model_path.parts and model_path.parts[0] in [".", "..", "outputs", "checkpoints", "artifacts"])
 
 
 if __name__ == "__main__":
