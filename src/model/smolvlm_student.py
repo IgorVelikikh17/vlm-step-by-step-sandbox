@@ -8,6 +8,7 @@ def load_smolvlm(
     trust_remote_code: bool = False,
     force_download: bool = False,
     local_files_only: bool = False,
+    eval_mode: bool = True,
 ):
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -29,7 +30,10 @@ def load_smolvlm(
         local_files_only=local_files_only,
     )
     model.to(resolved_device)
-    model.eval()
+    if eval_mode:
+        model.eval()
+    else:
+        model.train()
     return model, processor
 
 
