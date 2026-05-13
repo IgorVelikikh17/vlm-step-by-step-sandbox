@@ -29,7 +29,12 @@ def parse_args() -> argparse.Namespace:
         default="data/processed/teacher_cache/scienceqa_mock_train_debug.jsonl",
     )
     parser.add_argument("--split", type=str, choices=["train", "validation"], default="train")
-    parser.add_argument("--mode", type=str, choices=["answer_only", "reasoning_answer"], default="answer_only")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["answer_only", "reasoning_answer", "multitask", "multitask_label"],
+        default="answer_only",
+    )
     parser.add_argument("--label_source", type=str, choices=["gold", "teacher"], default="gold")
     parser.add_argument("--max_train_samples", type=int, default=8)
     parser.add_argument("--max_steps", type=int, default=2)

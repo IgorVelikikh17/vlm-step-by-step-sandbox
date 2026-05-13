@@ -24,7 +24,12 @@ def parse_args() -> argparse.Namespace:
         default="data/processed/teacher_cache/scienceqa_mock_train_debug.jsonl",
     )
     parser.add_argument("--split", type=str, choices=["train", "validation"], default="train")
-    parser.add_argument("--mode", type=str, choices=["answer_only", "reasoning_answer"], default="answer_only")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["answer_only", "reasoning_answer", "multitask", "multitask_label"],
+        default="answer_only",
+    )
     parser.add_argument("--label_source", type=str, choices=["gold", "teacher"], default="gold")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--preview_count", type=int, default=2)
@@ -63,6 +68,9 @@ def main() -> None:
         print()
         print(f"--- student row {index} ---")
         print(f"cache_id: {row['cache_id']}")
+        print(f"base_cache_id: {row.get('base_cache_id')}")
+        print(f"task: {row.get('task')}")
+        print(f"prompt_mode: {row.get('prompt_mode')}")
         print(f"question: {row['question']}")
         print("choices:")
         for choice_index, choice in enumerate(row["choices"]):
