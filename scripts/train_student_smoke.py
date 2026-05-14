@@ -68,11 +68,11 @@ def main() -> None:
         max_samples=args.max_train_samples,
     )
 
-    model_name = args.model_name or model_config.get("pretrained_name", "HuggingFaceTB/SmolVLM-500M-Instruct")
+    model_name_or_path = args.model_name or model_config.get("pretrained_name", "HuggingFaceTB/SmolVLM-500M-Instruct")
     print(f"config path: {ROOT / args.config}")
     print(f"model config path: {ROOT / args.model_config}")
     print(f"teacher cache path: {teacher_cache_path}")
-    print(f"model name: {model_name}")
+    print(f"model name or path: {model_name_or_path}")
     print(f"split: {args.split}")
     print(f"mode: {args.mode}")
     print(f"label_source: {args.label_source}")
@@ -90,7 +90,7 @@ def main() -> None:
     import torch
 
     model, processor = load_smolvlm(
-        model_name=model_name,
+        model_name_or_path=model_name_or_path,
         device=args.device,
         dtype=args.dtype,
         eval_mode=False,
@@ -120,7 +120,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output_dir)
     processor.save_pretrained(output_dir)
-    _save_training_config(args, model_name, output_dir, len(student_rows))
+    _save_training_config(args, model_name_or_path, output_dir, len(student_rows))
     print(f"saved smoke checkpoint: {output_dir}")
 
 
@@ -130,7 +130,7 @@ def _print_dry_run(student_rows: list[dict]) -> None:
         print("no student rows built")
         return
 
-    first = student_rows[0]
+    first = student_rows[0] 
     print(f"image exists: {first['image'] is not None}")
     print("first prompt:")
     print(first["prompt"])
@@ -138,9 +138,14 @@ def _print_dry_run(student_rows: list[dict]) -> None:
     print(first["target"])
 
 
-def _save_training_config(args: argparse.Namespace, model_name: str, output_dir: Path, num_rows: int) -> None:
+def _save_training_config(
+    args: argparse.Namespace,
+    model_name_or_path: str,
+    output_dir: Path,
+    num_rows: int,
+) -> None:
     payload = {
-        "model_name": model_name,
+        "model_name": model_name_or_path,
         "config": args.config,
         "model_config": args.model_config,
         "teacher_cache_path": args.teacher_cache_path,

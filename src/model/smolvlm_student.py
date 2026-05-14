@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def load_smolvlm(
-    model_name: str,
+    model_name_or_path: str,
     device: str = "auto",
     dtype: str = "auto",
     trust_remote_code: bool = False,
@@ -17,13 +17,13 @@ def load_smolvlm(
     torch_dtype = _resolve_dtype(dtype, torch)
 
     processor = AutoProcessor.from_pretrained(
-        model_name,
+        model_name_or_path,
         trust_remote_code=trust_remote_code,
         force_download=force_download,
         local_files_only=local_files_only,
     )
     model = AutoModelForImageTextToText.from_pretrained(
-        model_name,
+        model_name_or_path,
         torch_dtype=torch_dtype,
         trust_remote_code=trust_remote_code,
         force_download=force_download,

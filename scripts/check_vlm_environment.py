@@ -32,7 +32,7 @@ def main() -> None:
         print(f"device mps available: {_mps_available(torch)}")
         print("device cpu available: yes")
 
-    print(f"model name: {args.model_name}")
+    print(f"model name or path: {args.model_name}")
     _check_processor(args.model_name)
     _check_model(args.model_name)
 
@@ -56,13 +56,13 @@ def _mps_available(torch) -> bool:
     return bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
 
 
-def _check_processor(model_name: str) -> None:
+def _check_processor(model_name_or_path: str) -> None:
     print()
     print("AutoProcessor.from_pretrained:")
     try:
         from transformers import AutoProcessor
 
-        processor = AutoProcessor.from_pretrained(model_name)
+        processor = AutoProcessor.from_pretrained(model_name_or_path)
         print("success: true")
         print(f"processor class: {processor.__class__.__name__}")
     except Exception as error:
@@ -71,13 +71,13 @@ def _check_processor(model_name: str) -> None:
         print(f"exception message: {error}")
 
 
-def _check_model(model_name: str) -> None:
+def _check_model(model_name_or_path: str) -> None:
     print()
     print("AutoModelForImageTextToText.from_pretrained:")
     try:
         from transformers import AutoModelForImageTextToText
 
-        model = AutoModelForImageTextToText.from_pretrained(model_name)
+        model = AutoModelForImageTextToText.from_pretrained(model_name_or_path)
         print("success: true")
         print(f"model class: {model.__class__.__name__}")
     except Exception as error:

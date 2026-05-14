@@ -109,7 +109,7 @@ def _build_multitask_rows(
     for local_index in range(len(split_examples)):
         base_cache_id = f"{split_name}_{local_index}"
         teacher_row = teacher_by_cache_id.get(base_cache_id)
-        if teacher_row is None:
+        if teacher_row is None and (mode == "multitask" or label_source == "teacher"):
             continue
 
         example = normalize_scienceqa_example(split_examples[local_index], dataset_config)
@@ -132,12 +132,12 @@ def _build_multitask_rows(
 def _build_multitask_label_row(
     example: dict,
     dataset_config: dict,
-    teacher_row: dict,
+    teacher_row: dict | None,
     split_name: str,
     local_index: int,
     label_source: str,
 ) -> dict | None:
-    teacher_answer = teacher_row.get("teacher_answer")
+    teacher_answer = teacher_row.get("teacher_answer") if teacher_row else None
     answer_letter = example["answer_letter"] if label_source == "gold" else teacher_answer
     if not answer_letter:
         return None
