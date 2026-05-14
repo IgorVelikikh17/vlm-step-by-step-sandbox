@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
         default="data/processed/teacher_cache/scienceqa_mock_train_debug.jsonl",
     )
     parser.add_argument("--train_sizes", type=int, nargs="+", default=[8, 16, 32])
-    parser.add_argument("--max_steps_per_size", type=int, default=8)
+    parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--max_eval_samples", type=int, default=16)
     parser.add_argument("--max_new_tokens", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=1e-6)
@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    _validate_args(args)
     teacher_cache_path = resolve_project_path(ROOT, args.teacher_cache_path)
     if not teacher_cache_path.exists():
         _raise_missing_teacher_cache(teacher_cache_path, max(args.train_sizes))
@@ -146,23 +147,31 @@ def _build_runs(args: argparse.Namespace) -> list[dict]:
 
     runs = []
     for train_size in args.train_sizes:
+        max_steps = train_size * args.num_epochs
         for method in methods:
             checkpoint_dir = resolve_project_path(ROOT, args.output_root) / f"train_size_{train_size}" / method["name"]
             eval_dir = resolve_project_path(ROOT, args.results_dir) / f"train_size_{train_size}" / method["name"]
             runs.append(
                 {
                     "train_size": train_size,
+                    "max_steps": max_steps,
                     "method": method,
                     "checkpoint_dir": checkpoint_dir,
                     "eval_dir": eval_dir,
-                    "train_command": _train_command(args, method, train_size, checkpoint_dir),
+                    "train_command": _train_command(args, method, train_size, max_steps, checkpoint_dir),
                     "eval_command": _eval_command(args, method, checkpoint_dir, eval_dir),
                 }
             )
     return runs
 
 
-def _train_command(args: argparse.Namespace, method: dict, train_size: int, checkpoint_dir: Path) -> list[str]:
+def _train_command(
+    args: argparse.Namespace,
+    method: dict,
+    train_size: int,
+    max_steps: int,
+    checkpoint_dir: Path,
+) -> list[str]:
     command = [
         sys.executable,
         "scripts/train_student.py",
@@ -181,7 +190,7 @@ def _train_command(args: argparse.Namespace, method: dict, train_size: int, chec
         "--train_size",
         str(train_size),
         "--max_steps",
-        str(args.max_steps_per_size),
+        str(max_steps),
         "--batch_size",
         "1",
         "--learning_rate",
@@ -241,6 +250,8 @@ def _print_dry_run(runs: list[dict]) -> None:
     for run in runs:
         print()
         print(f"train_size: {run['train_size']}")
+        print(f"num_epochs: {run['max_steps'] // run['train_size']}")
+        print(f"max_steps: {run['max_steps']}")
         print(f"method: {run['method']['name']}")
         print("train command:")
         print(_format_command(run["train_command"]))
@@ -257,8 +268,9 @@ def _result_row(args: argparse.Namespace, run: dict, metrics: dict) -> dict:
     method = run["method"]
     return {
         "train_size": run["train_size"],
+        "num_epochs": args.num_epochs,
+        "max_steps": run["max_steps"],
         "method": method["name"],
-        "max_steps": args.max_steps_per_size,
         "learning_rate": args.learning_rate,
         "rationale_loss_weight": method["rationale_loss_weight"],
         "accuracy": metrics["accuracy"],
@@ -273,8 +285,9 @@ def _result_row(args: argparse.Namespace, run: dict, metrics: dict) -> dict:
 def _write_results_csv(rows: list[dict], path: Path) -> None:
     fieldnames = [
         "train_size",
-        "method",
+        "num_epochs",
         "max_steps",
+        "method",
         "learning_rate",
         "rationale_loss_weight",
         "accuracy",
@@ -298,6 +311,15 @@ def _read_json(path: Path) -> dict:
 def _write_json(payload: list[dict], path: Path) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _validate_args(args: argparse.Namespace) -> None:
+    if args.num_epochs < 1:
+        raise ValueError("--num_epochs must be >= 1")
+    if not args.train_sizes:
+        raise ValueError("--train_sizes must contain at least one value")
+    if any(train_size < 1 for train_size in args.train_sizes):
+        raise ValueError("--train_sizes values must be >= 1")
 
 
 def _raise_missing_teacher_cache(path: Path, max_train_size: int) -> None:
