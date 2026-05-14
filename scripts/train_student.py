@@ -95,6 +95,8 @@ def main() -> None:
 
     if not train_rows:
         raise RuntimeError("No student rows were built for training.")
+    if args.mode == "multitask":
+        _validate_multitask_pairs(train_rows)
 
     if is_local_model_path(args.model_name) and not Path(model_name_or_path).exists():
         raise FileNotFoundError(f"Local model checkpoint does not exist: {model_name_or_path}")
@@ -115,38 +117,26 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     optimizer.zero_grad()
 
-    loss_rows = []
     saved_checkpoint = False
-    stopped_reason = None
-
-    for step_index in range(args.max_steps):
-        row = train_rows[step_index % len(train_rows)]
-        batch = build_smolvlm_training_batch([row], processor, device=train_device)
-        outputs = model(**batch)
-        raw_loss = outputs.loss
-        loss_weight = _loss_weight(row, args)
-        loss = raw_loss * loss_weight
-
-        if not torch.isfinite(loss):
-            stopped_reason = "non_finite_loss"
-            loss_rows.append(_loss_row(step_index + 1, row, raw_loss, loss, loss_weight))
-            print(f"stopping: non-finite loss at step {step_index + 1}")
-            break
-
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-        optimizer.step()
-        optimizer.zero_grad()
-
-        loss_row = _loss_row(step_index + 1, row, raw_loss, loss, loss_weight)
-        loss_rows.append(loss_row)
-        print(
-            f"step: {loss_row['step']} "
-            f"loss: {loss_row['loss']:.6f} "
-            f"raw_loss: {loss_row['raw_loss']:.6f} "
-            f"task: {loss_row['task']} "
-            f"loss_weight: {loss_row['loss_weight']} "
-            f"cache_id: {loss_row['cache_id']}"
+    if args.mode == "multitask":
+        loss_rows, stopped_reason = _run_multitask_training(
+            train_rows=train_rows,
+            model=model,
+            processor=processor,
+            optimizer=optimizer,
+            train_device=train_device,
+            args=args,
+            torch=torch,
+        )
+    else:
+        loss_rows, stopped_reason = _run_answer_only_training(
+            train_rows=train_rows,
+            model=model,
+            processor=processor,
+            optimizer=optimizer,
+            train_device=train_device,
+            args=args,
+            torch=torch,
         )
 
     if stopped_reason is None:
@@ -176,20 +166,151 @@ def _take_original_examples(split_examples, train_size: int):
     return split_examples[:row_count]
 
 
-def _loss_weight(row: dict, args: argparse.Namespace) -> float:
-    if args.mode == "multitask" and row.get("task") == "rationale":
-        return args.rationale_loss_weight
-    return 1.0
+def _run_answer_only_training(
+    train_rows: list[dict],
+    model,
+    processor,
+    optimizer,
+    train_device: str,
+    args: argparse.Namespace,
+    torch,
+) -> tuple[list[dict], str | None]:
+    loss_rows = []
+    for step_index in range(args.max_steps):
+        row = train_rows[step_index % len(train_rows)]
+        batch = build_smolvlm_training_batch([row], processor, device=train_device)
+        outputs = model(**batch)
+        loss = outputs.loss
+
+        if not torch.isfinite(loss):
+            loss_rows.append(_answer_only_loss_row(step_index + 1, row, loss))
+            print(f"stopping: non-finite loss at step {step_index + 1}")
+            return loss_rows, "non_finite_loss"
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        loss_row = _answer_only_loss_row(step_index + 1, row, loss)
+        loss_rows.append(loss_row)
+        print(
+            f"step: {loss_row['step']} "
+            f"loss: {loss_row['loss']:.6f} "
+            f"task: {loss_row['task']} "
+            f"cache_id: {loss_row['cache_id']}"
+        )
+
+    return loss_rows, None
 
 
-def _loss_row(step: int, row: dict, raw_loss, loss, loss_weight: float) -> dict:
+def _run_multitask_training(
+    train_rows: list[dict],
+    model,
+    processor,
+    optimizer,
+    train_device: str,
+    args: argparse.Namespace,
+    torch,
+) -> tuple[list[dict], str | None]:
+    loss_rows = []
+    num_pairs = len(train_rows) // 2
+    for step_index in range(args.max_steps):
+        pair_index = step_index % num_pairs
+        label_row = train_rows[pair_index * 2]
+        rationale_row = train_rows[pair_index * 2 + 1]
+
+        label_batch = build_smolvlm_training_batch([label_row], processor, device=train_device)
+        label_outputs = model(**label_batch)
+        label_loss = label_outputs.loss
+
+        rationale_batch = build_smolvlm_training_batch([rationale_row], processor, device=train_device)
+        rationale_outputs = model(**rationale_batch)
+        rationale_loss = rationale_outputs.loss
+
+        total_loss = label_loss + args.rationale_loss_weight * rationale_loss
+        loss_row = _multitask_loss_row(
+            step=step_index + 1,
+            label_row=label_row,
+            rationale_row=rationale_row,
+            label_loss=label_loss,
+            rationale_loss=rationale_loss,
+            total_loss=total_loss,
+            rationale_loss_weight=args.rationale_loss_weight,
+        )
+
+        if not _all_finite(torch, label_loss, rationale_loss, total_loss):
+            loss_rows.append(loss_row)
+            print(f"stopping: non-finite multitask loss at step {step_index + 1}")
+            return loss_rows, "non_finite_loss"
+
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        loss_rows.append(loss_row)
+        print(
+            f"step: {loss_row['step']} "
+            f"total_loss: {loss_row['total_loss']:.6f} "
+            f"label_loss: {loss_row['label_loss']:.6f} "
+            f"rationale_loss: {loss_row['rationale_loss']:.6f} "
+            f"rationale_loss_weight: {loss_row['rationale_loss_weight']} "
+            f"base_cache_id: {loss_row['base_cache_id']}"
+        )
+
+    return loss_rows, None
+
+
+def _validate_multitask_pairs(train_rows: list[dict]) -> None:
+    if len(train_rows) < 2 or len(train_rows) % 2 != 0:
+        raise ValueError("multitask training requires an even number of label/rationale rows.")
+
+    for pair_start in range(0, len(train_rows), 2):
+        label_row = train_rows[pair_start]
+        rationale_row = train_rows[pair_start + 1]
+        if label_row.get("task") != "label":
+            raise ValueError(f"Expected label row at index {pair_start}, got: {label_row.get('cache_id')}")
+        if rationale_row.get("task") != "rationale":
+            raise ValueError(f"Expected rationale row at index {pair_start + 1}, got: {rationale_row.get('cache_id')}")
+        if label_row.get("base_cache_id") != rationale_row.get("base_cache_id"):
+            raise ValueError(
+                "Mismatched multitask pair: "
+                f"{label_row.get('cache_id')} and {rationale_row.get('cache_id')}"
+            )
+
+
+def _all_finite(torch, *losses) -> bool:
+    return all(bool(torch.isfinite(loss).item()) for loss in losses)
+
+
+def _answer_only_loss_row(step: int, row: dict, loss) -> dict:
     return {
         "step": step,
         "loss": float(loss.detach().cpu().item()),
-        "raw_loss": float(raw_loss.detach().cpu().item()),
         "task": row.get("task", "label"),
-        "loss_weight": loss_weight,
         "cache_id": row["cache_id"],
+    }
+
+
+def _multitask_loss_row(
+    step: int,
+    label_row: dict,
+    rationale_row: dict,
+    label_loss,
+    rationale_loss,
+    total_loss,
+    rationale_loss_weight: float,
+) -> dict:
+    return {
+        "step": step,
+        "base_cache_id": label_row["base_cache_id"],
+        "label_cache_id": label_row["cache_id"],
+        "rationale_cache_id": rationale_row["cache_id"],
+        "label_loss": float(label_loss.detach().cpu().item()),
+        "rationale_loss": float(rationale_loss.detach().cpu().item()),
+        "rationale_loss_weight": rationale_loss_weight,
+        "total_loss": float(total_loss.detach().cpu().item()),
     }
 
 
@@ -199,6 +320,20 @@ def _print_dry_run(num_original_examples: int, train_rows: list[dict]) -> None:
     print(f"number of student rows: {len(train_rows)}")
     if not train_rows:
         print("no student rows built")
+        return
+
+    if len(train_rows) >= 2 and train_rows[0].get("task") == "label" and train_rows[1].get("task") == "rationale":
+        label_row = train_rows[0]
+        rationale_row = train_rows[1]
+        print("first label row:")
+        print(f"cache_id: {label_row['cache_id']}")
+        print("target:")
+        print(label_row["target"])
+        print()
+        print("first rationale row:")
+        print(f"cache_id: {rationale_row['cache_id']}")
+        print("target:")
+        print(rationale_row["target"])
         return
 
     first = train_rows[0]
@@ -246,18 +381,55 @@ def _train_metrics(
     saved_checkpoint: bool,
     stopped_reason: str | None,
 ) -> dict:
+    num_optimizer_steps = _num_optimizer_steps(loss_rows, stopped_reason)
     return {
         "num_original_examples": num_original_examples,
         "num_student_rows": num_student_rows,
         "max_steps": args.max_steps,
-        "completed_steps": len(loss_rows),
-        "final_loss": loss_rows[-1]["loss"] if loss_rows else None,
+        "completed_steps": num_optimizer_steps,
+        "final_loss": _final_loss(loss_rows),
         "mode": args.mode,
         "label_source": args.label_source,
         "rationale_loss_weight": args.rationale_loss_weight,
+        "loss_formula": _loss_formula(args.mode),
+        "num_optimizer_steps": num_optimizer_steps,
+        "num_label_rows_used": _num_label_rows_used(args.mode, num_optimizer_steps),
+        "num_rationale_rows_used": _num_rationale_rows_used(args.mode, num_optimizer_steps),
         "saved_checkpoint": saved_checkpoint,
         "stopped_reason": stopped_reason,
     }
+
+
+def _num_optimizer_steps(loss_rows: list[dict], stopped_reason: str | None) -> int:
+    if stopped_reason is None:
+        return len(loss_rows)
+    return max(0, len(loss_rows) - 1)
+
+
+def _final_loss(loss_rows: list[dict]) -> float | None:
+    if not loss_rows:
+        return None
+    if "total_loss" in loss_rows[-1]:
+        return loss_rows[-1]["total_loss"]
+    return loss_rows[-1]["loss"]
+
+
+def _loss_formula(mode: str) -> str:
+    if mode == "multitask":
+        return "label_loss + rationale_loss_weight * rationale_loss"
+    return "loss"
+
+
+def _num_label_rows_used(mode: str, num_optimizer_steps: int) -> int:
+    if mode == "multitask":
+        return num_optimizer_steps
+    return num_optimizer_steps
+
+
+def _num_rationale_rows_used(mode: str, num_optimizer_steps: int) -> int:
+    if mode == "multitask":
+        return num_optimizer_steps
+    return 0
 
 
 def _write_json(payload: dict, path: Path) -> None:
