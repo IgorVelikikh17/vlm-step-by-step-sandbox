@@ -42,11 +42,27 @@ def format_qwen_teacher_prompt(example: dict) -> str:
         f"Question: {example['question']}\n\n"
         "Choices:\n"
         f"{choices}\n\n"
-        "Explain briefly using the image if relevant.\n"
-        "Then give the final answer as a single letter.\n\n"
-        "Use exactly this format:\n"
-        "Reasoning: ...\n"
-        "Answer: <letter>"
+        "Give a short reasoning. Then give the final answer.\n\n"
+        "Your response must have exactly two fields:\n"
+        "Reasoning: <one or two short sentences>\n"
+        "Answer: <single letter A, B, C, D, or E>\n\n"
+        "Do not add anything after the Answer line."
+    )
+
+
+def format_qwen_teacher_retry_prompt(example: dict) -> str:
+    choices = "\n".join(
+        f"{chr(65 + choice_index)}. {choice}"
+        for choice_index, choice in enumerate(example["choices"])
+    )
+    return (
+        "Look at the image and answer the same multiple-choice question.\n\n"
+        f"Question: {example['question']}\n\n"
+        "Choices:\n"
+        f"{choices}\n\n"
+        "Return only this format:\n"
+        "Reasoning: <very short reason>\n"
+        "Answer: <single letter>"
     )
 
 
@@ -55,7 +71,7 @@ def generate_qwen_teacher_output(
     processor,
     image,
     prompt: str,
-    max_new_tokens: int = 128,
+    max_new_tokens: int = 256,
 ) -> dict:
     device = _model_device(model)
     messages = [

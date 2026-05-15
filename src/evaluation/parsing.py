@@ -11,6 +11,12 @@ def parse_answer_letter(text: str) -> str | None:
         r"(?im)^\s*Answer\s*:\s*([A-E])\b",
         r"(?im)^\s*Final answer\s*:\s*([A-E])\b",
         r"(?i)\bThe answer is\s+([A-E])\b",
+        r"(?i)\bAnswer is\s+([A-E])\b",
+        r"(?i)\bThe correct answer is\s+([A-E])\b",
+        r"(?i)\bTherefore,\s*the answer is\s+([A-E])\b",
+        r"(?i)\bSo\s+the answer is\s+([A-E])\b",
+        r"(?i)\bOption\s+([A-E])\b",
+        r"(?im)^\s*([A-E])\.\s*$",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -24,7 +30,7 @@ def parse_reasoning_text(raw_output: str) -> str:
         return ""
 
     match = re.search(
-        r"(?is)Reasoning\s*:\s*(.*?)(?:^\s*Answer\s*:|\Z)",
+        r"(?ims)Reasoning\s*:\s*(.*?)(?:^\s*Answer\s*:|\Z)",
         raw_output,
     )
     if match:

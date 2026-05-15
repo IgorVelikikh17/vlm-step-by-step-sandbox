@@ -13,6 +13,7 @@ from io_utils import load_yaml, resolve_project_path, write_jsonl  # noqa: E402
 from mock_teacher import generate_mock_teacher_output  # noqa: E402
 from qwen_vl_teacher import (  # noqa: E402
     format_qwen_teacher_prompt,
+    format_qwen_teacher_retry_prompt,
     generate_qwen_teacher_output,
     load_qwen_vl_teacher,
 )
@@ -36,7 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_model_name", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
     parser.add_argument("--teacher_device", type=str, choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--teacher_dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
-    parser.add_argument("--teacher_max_new_tokens", type=int, default=128)
+    parser.add_argument("--teacher_max_new_tokens", type=int, default=256)
+    parser.add_argument("--retry_on_parse_failure", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
@@ -100,6 +102,8 @@ def main() -> None:
                 "teacher_reasoning": teacher_output["teacher_reasoning"],
                 "teacher_answer": teacher_output["teacher_answer"],
                 "teacher_raw_output": teacher_output["teacher_raw_output"],
+                "teacher_retry_used": teacher_output.get("teacher_retry_used", False),
+                "teacher_first_raw_output": teacher_output.get("teacher_first_raw_output"),
             }
         )
 
@@ -127,13 +131,29 @@ def _generate_teacher_output(
     processor,
 ) -> dict:
     if args.teacher_type == "qwen":
-        return generate_qwen_teacher_output(
+        teacher_output = generate_qwen_teacher_output(
             model=model,
             processor=processor,
             image=example["image"],
             prompt=prompt,
             max_new_tokens=args.teacher_max_new_tokens,
         )
+        teacher_output["teacher_retry_used"] = False
+
+        if args.retry_on_parse_failure and teacher_output.get("teacher_answer") is None:
+            retry_prompt = format_qwen_teacher_retry_prompt(example)
+            retry_output = generate_qwen_teacher_output(
+                model=model,
+                processor=processor,
+                image=example["image"],
+                prompt=retry_prompt,
+                max_new_tokens=args.teacher_max_new_tokens,
+            )
+            retry_output["teacher_retry_used"] = True
+            retry_output["teacher_first_raw_output"] = teacher_output["teacher_raw_output"]
+            return retry_output
+
+        return teacher_output
     return generate_mock_teacher_output(example, use_gold_answer=args.use_gold_answer)
 
 
