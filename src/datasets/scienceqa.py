@@ -21,12 +21,16 @@ def load_scienceqa_image_examples(dataset_config: dict, experiment_config: dict 
                 dataset[train_split_name],
                 image_column=image_column,
                 only_with_image=dataset_config.get("only_with_image", True),
+                shuffle=_shuffle_enabled(experiment_config, "shuffle_train"),
+                shuffle_seed=_shuffle_seed(experiment_config),
                 max_samples=_sample_limit(dataset_config, experiment_config, "max_train_samples"),
             ),
             "validation": _prepare_split(
                 dataset[eval_split_name],
                 image_column=image_column,
                 only_with_image=dataset_config.get("only_with_image", True),
+                shuffle=_shuffle_enabled(experiment_config, "shuffle_eval"),
+                shuffle_seed=_shuffle_seed(experiment_config),
                 max_samples=_sample_limit(dataset_config, experiment_config, "max_eval_samples"),
             ),
         }
@@ -77,9 +81,28 @@ def _sample_limit(dataset_config: dict, experiment_config: dict | None, key: str
     return dataset_config.get(key)
 
 
-def _prepare_split(split, image_column: str, only_with_image: bool, max_samples: int | None):
+def _shuffle_enabled(experiment_config: dict | None, key: str) -> bool:
+    return bool(experiment_config and experiment_config.get(key, False))
+
+
+def _shuffle_seed(experiment_config: dict | None) -> int:
+    if not experiment_config:
+        return 42
+    return int(experiment_config.get("shuffle_seed", experiment_config.get("seed", 42)))
+
+
+def _prepare_split(
+    split,
+    image_column: str,
+    only_with_image: bool,
+    shuffle: bool,
+    shuffle_seed: int,
+    max_samples: int | None,
+):
     if only_with_image:
         split = split.filter(lambda example: example[image_column] is not None)
+    if shuffle:
+        split = split.shuffle(seed=shuffle_seed)
     if max_samples is not None:
         split = split.select(range(min(max_samples, len(split))))
     return split

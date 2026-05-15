@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,8 +34,13 @@ def main() -> None:
     splits = load_scienceqa_image_examples(dataset_config, experiment_config)
 
     print(f"experiment: {experiment_config['experiment_name']}")
+    print(f"shuffle_train: {bool(experiment_config.get('shuffle_train', False))}")
+    print(f"shuffle_eval: {bool(experiment_config.get('shuffle_eval', False))}")
+    print(f"shuffle_seed: {experiment_config.get('shuffle_seed', experiment_config.get('seed'))}")
     print(f"train image examples: {len(splits['train'])}")
     print(f"validation image examples: {len(splits['validation'])}")
+    _print_split_preview("train", splits["train"], dataset_config)
+    _print_split_preview("validation", splits["validation"], dataset_config)
 
     preview_count = min(experiment_config.get("prompt_preview_count", 1), len(splits["validation"]))
     for index in range(preview_count):
@@ -74,6 +80,29 @@ def main() -> None:
 
 def _reasoning_text(example: dict) -> str | None:
     return example.get("solution") or example.get("lecture") or example.get("hint")
+
+
+def _print_split_preview(split_name: str, split, dataset_config: dict) -> None:
+    print()
+    print(f"{split_name} first questions:")
+    for index in range(min(3, len(split))):
+        example = normalize_scienceqa_example(split[index], dataset_config)
+        print(f"  {split_name}_{index}: {example['answer_letter']} | {example['question']}")
+
+    distribution = _gold_distribution(split, dataset_config)
+    print(f"{split_name} gold distribution:")
+    for letter in ["A", "B", "C", "D", "E"]:
+        if distribution.get(letter, 0):
+            print(f"  {letter}: {distribution[letter]}")
+
+
+def _gold_distribution(split, dataset_config: dict) -> Counter:
+    distribution = Counter()
+    for index in range(len(split)):
+        example = normalize_scienceqa_example(split[index], dataset_config)
+        if example["answer_letter"]:
+            distribution[example["answer_letter"]] += 1
+    return distribution
 
 
 if __name__ == "__main__":
