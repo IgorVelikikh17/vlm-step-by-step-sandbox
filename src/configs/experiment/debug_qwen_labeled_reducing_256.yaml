@@ -1,0 +1,16 @@
+experiment_name: vlm_step_by_step_qwen_labeled_reducing_256_debug
+seed: 42
+
+dataset_config: src/configs/dataset/scienceqa.yaml
+student_model_config: src/configs/model/smolvlm_500m.yaml
+teacher_config: src/configs/teacher/qwen_vl.yaml
+
+max_train_samples: 256
+max_eval_samples: 256
+
+shuffle_train: true
+shuffle_eval: true
+shuffle_seed: 42
+
+output_dir: artifacts/debug_qwen_labeled_reducing_256
+prompt_preview_count: 2

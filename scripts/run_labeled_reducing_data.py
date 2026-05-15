@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_root", type=str, default="outputs/labeled_reducing_data")
     parser.add_argument("--results_dir", type=str, default="results/labeled_reducing_data")
     parser.add_argument("--multitask_method_name", type=str, default="multitask_gold")
+    parser.add_argument("--filter_rationale_by_gold_answer", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
@@ -143,6 +144,7 @@ def _build_runs(args: argparse.Namespace) -> list[dict]:
             "train_mode": "multitask",
             "eval_mode": "multitask_label",
             "rationale_loss_weight": args.rationale_loss_weight,
+            "filter_rationale_by_gold_answer": args.filter_rationale_by_gold_answer,
         },
     ]
 
@@ -207,6 +209,8 @@ def _train_command(
         command.extend(["--model_name", args.model_name])
     if method["train_mode"] == "multitask":
         command.extend(["--rationale_loss_weight", str(args.rationale_loss_weight)])
+    if method.get("filter_rationale_by_gold_answer"):
+        command.append("--filter_rationale_by_gold_answer")
     return command
 
 
@@ -274,6 +278,7 @@ def _result_row(args: argparse.Namespace, run: dict, metrics: dict) -> dict:
         "method": method["name"],
         "learning_rate": args.learning_rate,
         "rationale_loss_weight": method["rationale_loss_weight"],
+        "filter_rationale_by_gold_answer": method.get("filter_rationale_by_gold_answer", False),
         "accuracy": metrics["accuracy"],
         "parse_failure_rate": metrics["parse_failure_rate"],
         "num_examples": metrics["num_examples"],
@@ -291,6 +296,7 @@ def _write_results_csv(rows: list[dict], path: Path) -> None:
         "method",
         "learning_rate",
         "rationale_loss_weight",
+        "filter_rationale_by_gold_answer",
         "accuracy",
         "parse_failure_rate",
         "num_examples",

@@ -17,6 +17,7 @@ def build_student_rows(
     mode: str,
     label_source: str,
     max_samples: int | None = None,
+    filter_rationale_by_gold_answer: bool = False,
 ) -> list[dict]:
     _validate_args(mode, label_source)
 
@@ -30,6 +31,7 @@ def build_student_rows(
             mode=mode,
             label_source=label_source,
             max_samples=max_samples,
+            filter_rationale_by_gold_answer=filter_rationale_by_gold_answer,
         )
 
     row_count = len(split_examples) if max_samples is None else min(max_samples, len(split_examples))
@@ -105,22 +107,32 @@ def _build_multitask_rows(
     mode: str,
     label_source: str,
     max_samples: int | None,
+    filter_rationale_by_gold_answer: bool,
 ) -> list[dict]:
     rows = []
     for local_index in range(len(split_examples)):
         base_cache_id = f"{split_name}_{local_index}"
         teacher_row = teacher_by_cache_id.get(base_cache_id)
-        if teacher_row is None and (mode == "multitask" or label_source == "teacher"):
+        if teacher_row is None and (mode == "multitask" or label_source == "teacher") and not filter_rationale_by_gold_answer:
             continue
 
         example = normalize_scienceqa_example(split_examples[local_index], dataset_config)
-        label_row = _build_multitask_label_row(example, dataset_config, teacher_row, split_name, local_index, label_source)
+        rationale_skip_reason = _rationale_skip_reason(example, teacher_row) if filter_rationale_by_gold_answer else None
+        label_row = _build_multitask_label_row(
+            example=example,
+            dataset_config=dataset_config,
+            teacher_row=teacher_row,
+            split_name=split_name,
+            local_index=local_index,
+            label_source=label_source,
+            rationale_skip_reason=rationale_skip_reason,
+        )
         if label_row is not None:
             rows.append(label_row)
             if _enough_rows(rows, max_samples):
                 return rows
 
-        if mode == "multitask":
+        if mode == "multitask" and rationale_skip_reason is None:
             rationale_row = _build_multitask_rationale_row(example, dataset_config, teacher_row, split_name, local_index)
             if rationale_row is not None:
                 rows.append(rationale_row)
@@ -137,6 +149,7 @@ def _build_multitask_label_row(
     split_name: str,
     local_index: int,
     label_source: str,
+    rationale_skip_reason: str | None,
 ) -> dict | None:
     teacher_answer = teacher_row.get("teacher_answer") if teacher_row else None
     answer_letter = example["answer_letter"] if label_source == "gold" else teacher_answer
@@ -156,6 +169,7 @@ def _build_multitask_label_row(
         label_source=label_source,
         prompt=format_scienceqa_prompt(example, dataset_config, mode="multitask_label"),
         target=format_answer_target(answer_letter),
+        rationale_skip_reason=rationale_skip_reason,
     )
 
 
@@ -184,6 +198,7 @@ def _build_multitask_rationale_row(
         label_source="teacher",
         prompt=format_scienceqa_prompt(example, dataset_config, mode="multitask_rationale"),
         target=format_rationale_target(teacher_reasoning),
+        rationale_skip_reason=None,
     )
 
 
@@ -199,6 +214,7 @@ def _student_row(
     label_source: str,
     prompt: str,
     target: str,
+    rationale_skip_reason: str | None,
 ) -> dict:
     return {
         "cache_id": cache_id,
@@ -217,8 +233,25 @@ def _student_row(
         "label_source": label_source,
         "prompt": prompt,
         "target": target,
+        "rationale_used": task == "rationale" or (task == "label" and rationale_skip_reason is None),
+        "rationale_skip_reason": rationale_skip_reason,
     }
 
 
 def _enough_rows(rows: list[dict], max_samples: int | None) -> bool:
     return max_samples is not None and len(rows) >= max_samples
+
+
+def _rationale_skip_reason(example: dict, teacher_row: dict | None) -> str | None:
+    if teacher_row is None:
+        return "missing_teacher_row"
+
+    teacher_reasoning = teacher_row.get("teacher_reasoning")
+    if not teacher_reasoning:
+        return "missing_teacher_reasoning"
+
+    teacher_answer = teacher_row.get("teacher_answer")
+    if teacher_answer != example["answer_letter"]:
+        return "teacher_answer_mismatch"
+
+    return None

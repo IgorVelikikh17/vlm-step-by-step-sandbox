@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label_source", type=str, choices=["gold", "teacher"], default="gold")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--preview_count", type=int, default=2)
+    parser.add_argument("--filter_rationale_by_gold_answer", action="store_true")
     return parser.parse_args()
 
 
@@ -53,6 +54,7 @@ def main() -> None:
         mode=args.mode,
         label_source=args.label_source,
         max_samples=args.max_samples,
+        filter_rationale_by_gold_answer=args.filter_rationale_by_gold_answer,
     )
 
     print(f"config path: {ROOT / args.config}")
@@ -60,6 +62,7 @@ def main() -> None:
     print(f"split: {args.split}")
     print(f"mode: {args.mode}")
     print(f"label_source: {args.label_source}")
+    print(f"filter_rationale_by_gold_answer: {args.filter_rationale_by_gold_answer}")
     print(f"built student rows: {len(student_rows)}")
 
     preview_count = min(args.preview_count, len(student_rows))
@@ -78,6 +81,8 @@ def main() -> None:
             print(f"  {chr(65 + choice_index)}. {choice}")
         print(f"gold_answer: {row['gold_answer']}")
         print(f"teacher_answer: {row['teacher_answer']}")
+        print(f"rationale_used: {row.get('rationale_used')}")
+        print(f"rationale_skip_reason: {row.get('rationale_skip_reason')}")
         print("prompt:")
         print(row["prompt"])
         print("target:")

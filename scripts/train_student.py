@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=1e-6)
     parser.add_argument("--rationale_loss_weight", type=float, default=1.0)
+    parser.add_argument("--filter_rationale_by_gold_answer", action="store_true")
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--device", type=str, choices=["auto", "cpu", "cuda", "mps"], default="auto")
@@ -70,6 +71,7 @@ def main() -> None:
         mode=args.mode,
         label_source=args.label_source,
         max_samples=None,
+        filter_rationale_by_gold_answer=args.filter_rationale_by_gold_answer,
     )
 
     model_name_or_path = resolve_model_name_or_path(
@@ -91,6 +93,8 @@ def main() -> None:
     print(f"batch_size: {args.batch_size}")
     print(f"log_every: {args.log_every}")
     print(f"rationale_loss_weight: {args.rationale_loss_weight}")
+    print(f"filter_rationale_by_gold_answer: {args.filter_rationale_by_gold_answer}")
+    _print_rationale_stats(train_rows)
     print(f"output dir: {output_dir}")
 
     if args.dry_run:
@@ -99,7 +103,7 @@ def main() -> None:
 
     if not train_rows:
         raise RuntimeError("No student rows were built for training.")
-    if args.mode == "multitask":
+    if args.mode == "multitask" and not args.filter_rationale_by_gold_answer:
         _validate_multitask_pairs(train_rows)
 
     if is_local_model_path(args.model_name) and not Path(model_name_or_path).exists():
@@ -122,7 +126,17 @@ def main() -> None:
     optimizer.zero_grad()
 
     saved_checkpoint = False
-    if args.mode == "multitask":
+    if args.mode == "multitask" and args.filter_rationale_by_gold_answer:
+        loss_rows, stopped_reason = _run_filtered_multitask_training(
+            train_rows=train_rows,
+            model=model,
+            processor=processor,
+            optimizer=optimizer,
+            train_device=train_device,
+            args=args,
+            torch=torch,
+        )
+    elif args.mode == "multitask":
         loss_rows, stopped_reason = _run_multitask_training(
             train_rows=train_rows,
             model=model,
@@ -153,6 +167,7 @@ def main() -> None:
         args=args,
         num_original_examples=num_original_examples,
         num_student_rows=len(train_rows),
+        train_rows=train_rows,
         loss_rows=loss_rows,
         saved_checkpoint=saved_checkpoint,
         stopped_reason=stopped_reason,
@@ -242,6 +257,8 @@ def _run_multitask_training(
             rationale_loss=rationale_loss,
             total_loss=total_loss,
             rationale_loss_weight=args.rationale_loss_weight,
+            rationale_used=True,
+            rationale_skip_reason=None,
         )
 
         if not _all_finite(torch, label_loss, rationale_loss, total_loss):
@@ -262,6 +279,91 @@ def _run_multitask_training(
                 f"label_loss: {loss_row['label_loss']:.6f} "
                 f"rationale_loss: {loss_row['rationale_loss']:.6f} "
                 f"rationale_loss_weight: {loss_row['rationale_loss_weight']} "
+                f"rationale_used: {loss_row['rationale_used']} "
+                f"base_cache_id: {loss_row['base_cache_id']}"
+            )
+
+    return loss_rows, None
+
+
+def _run_filtered_multitask_training(
+    train_rows: list[dict],
+    model,
+    processor,
+    optimizer,
+    train_device: str,
+    args: argparse.Namespace,
+    torch,
+) -> tuple[list[dict], str | None]:
+    loss_rows = []
+    label_rows = [row for row in train_rows if row.get("task") == "label"]
+    rationale_by_base_cache_id = {
+        row["base_cache_id"]: row for row in train_rows if row.get("task") == "rationale"
+    }
+    if not label_rows:
+        raise RuntimeError("No label rows were built for filtered multitask training.")
+
+    for step_index in range(args.max_steps):
+        label_row = label_rows[step_index % len(label_rows)]
+        rationale_row = rationale_by_base_cache_id.get(label_row["base_cache_id"])
+
+        label_batch = build_smolvlm_training_batch([label_row], processor, device=train_device)
+        label_outputs = model(**label_batch)
+        label_loss = label_outputs.loss
+
+        rationale_loss = None
+        rationale_used = rationale_row is not None
+        if rationale_used:
+            rationale_batch = build_smolvlm_training_batch([rationale_row], processor, device=train_device)
+            rationale_outputs = model(**rationale_batch)
+            rationale_loss = rationale_outputs.loss
+            total_loss = label_loss + args.rationale_loss_weight * rationale_loss
+            loss_weight = args.rationale_loss_weight
+            skip_reason = None
+            finite_losses = [label_loss, rationale_loss, total_loss]
+        else:
+            total_loss = label_loss
+            loss_weight = 0.0
+            skip_reason = label_row.get("rationale_skip_reason", "missing_rationale_row")
+            finite_losses = [label_loss, total_loss]
+
+        loss_row = _multitask_loss_row(
+            step=step_index + 1,
+            label_row=label_row,
+            rationale_row=rationale_row,
+            label_loss=label_loss,
+            rationale_loss=rationale_loss,
+            total_loss=total_loss,
+            rationale_loss_weight=loss_weight,
+            rationale_used=rationale_used,
+            rationale_skip_reason=skip_reason,
+        )
+
+        if not _all_finite(torch, *finite_losses):
+            loss_rows.append(loss_row)
+            print(f"stopping: non-finite filtered multitask loss at step {step_index + 1}")
+            return loss_rows, "non_finite_loss"
+
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        loss_rows.append(loss_row)
+        if _should_log_step(loss_row["step"], args.max_steps, args.log_every):
+            if rationale_used:
+                rationale_part = (
+                    f"rationale_used: true "
+                    f"rationale_loss: {loss_row['rationale_loss']:.6f} "
+                    f"rationale_loss_weight: {loss_row['rationale_loss_weight']}"
+                )
+            else:
+                rationale_part = f"rationale_used: false rationale_skip_reason: {skip_reason}"
+            print(
+                f"step: {loss_row['step']} "
+                f"total_loss: {loss_row['total_loss']:.6f} "
+                f"label_loss: {loss_row['label_loss']:.6f} "
+                f"{rationale_part} "
                 f"base_cache_id: {loss_row['base_cache_id']}"
             )
 
@@ -306,21 +408,25 @@ def _answer_only_loss_row(step: int, row: dict, loss) -> dict:
 def _multitask_loss_row(
     step: int,
     label_row: dict,
-    rationale_row: dict,
+    rationale_row: dict | None,
     label_loss,
     rationale_loss,
     total_loss,
     rationale_loss_weight: float,
+    rationale_used: bool,
+    rationale_skip_reason: str | None,
 ) -> dict:
     return {
         "step": step,
         "base_cache_id": label_row["base_cache_id"],
         "label_cache_id": label_row["cache_id"],
-        "rationale_cache_id": rationale_row["cache_id"],
+        "rationale_cache_id": rationale_row["cache_id"] if rationale_row else None,
         "label_loss": float(label_loss.detach().cpu().item()),
-        "rationale_loss": float(rationale_loss.detach().cpu().item()),
+        "rationale_loss": float(rationale_loss.detach().cpu().item()) if rationale_loss is not None else None,
         "rationale_loss_weight": rationale_loss_weight,
         "total_loss": float(total_loss.detach().cpu().item()),
+        "rationale_used": rationale_used,
+        "rationale_skip_reason": rationale_skip_reason,
     }
 
 
@@ -328,6 +434,7 @@ def _print_dry_run(num_original_examples: int, train_rows: list[dict]) -> None:
     print("dry_run: true")
     print(f"train_size original examples: {num_original_examples}")
     print(f"number of student rows: {len(train_rows)}")
+    _print_rationale_stats(train_rows)
     if not train_rows:
         print("no student rows built")
         return
@@ -337,11 +444,14 @@ def _print_dry_run(num_original_examples: int, train_rows: list[dict]) -> None:
         rationale_row = train_rows[1]
         print("first label row:")
         print(f"cache_id: {label_row['cache_id']}")
+        print(f"rationale_used: {label_row.get('rationale_used')}")
+        print(f"rationale_skip_reason: {label_row.get('rationale_skip_reason')}")
         print("target:")
         print(label_row["target"])
         print()
         print("first rationale row:")
         print(f"cache_id: {rationale_row['cache_id']}")
+        print(f"rationale_used: {rationale_row.get('rationale_used')}")
         print("target:")
         print(rationale_row["target"])
         return
@@ -349,6 +459,8 @@ def _print_dry_run(num_original_examples: int, train_rows: list[dict]) -> None:
     first = train_rows[0]
     print(f"first row cache_id: {first['cache_id']}")
     print(f"first row task: {first.get('task', 'label')}")
+    print(f"rationale_used: {first.get('rationale_used')}")
+    print(f"rationale_skip_reason: {first.get('rationale_skip_reason')}")
     print("first prompt:")
     print(first["prompt"])
     print("first target:")
@@ -376,6 +488,7 @@ def _training_config(
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
         "rationale_loss_weight": args.rationale_loss_weight,
+        "filter_rationale_by_gold_answer": args.filter_rationale_by_gold_answer,
         "max_grad_norm": args.max_grad_norm,
         "log_every": args.log_every,
         "device": args.device,
@@ -388,11 +501,14 @@ def _train_metrics(
     args: argparse.Namespace,
     num_original_examples: int,
     num_student_rows: int,
+    train_rows: list[dict],
     loss_rows: list[dict],
     saved_checkpoint: bool,
     stopped_reason: str | None,
 ) -> dict:
     num_optimizer_steps = _num_optimizer_steps(loss_rows, stopped_reason)
+    train_rationale_stats = _rationale_stats_from_train_rows(train_rows)
+    step_rationale_stats = _rationale_stats_from_loss_rows(loss_rows)
     return {
         "num_original_examples": num_original_examples,
         "num_student_rows": num_student_rows,
@@ -402,10 +518,20 @@ def _train_metrics(
         "mode": args.mode,
         "label_source": args.label_source,
         "rationale_loss_weight": args.rationale_loss_weight,
+        "filter_rationale_by_gold_answer": args.filter_rationale_by_gold_answer,
         "loss_formula": _loss_formula(args.mode),
         "num_optimizer_steps": num_optimizer_steps,
         "num_label_rows_used": _num_label_rows_used(args.mode, num_optimizer_steps),
-        "num_rationale_rows_used": _num_rationale_rows_used(args.mode, num_optimizer_steps),
+        "num_rationale_rows_used": step_rationale_stats["num_rationale_rows_used"],
+        "num_examples_with_usable_rationale": train_rationale_stats["num_examples_with_usable_rationale"],
+        "num_rationale_skipped_teacher_answer_mismatch": train_rationale_stats[
+            "num_rationale_skipped_teacher_answer_mismatch"
+        ],
+        "num_rationale_skipped_missing_teacher_row": train_rationale_stats["num_rationale_skipped_missing_teacher_row"],
+        "num_rationale_skipped_missing_teacher_reasoning": train_rationale_stats[
+            "num_rationale_skipped_missing_teacher_reasoning"
+        ],
+        "num_rationale_skipped_missing_rationale_row": step_rationale_stats["num_rationale_skipped_missing_rationale_row"],
         "saved_checkpoint": saved_checkpoint,
         "stopped_reason": stopped_reason,
     }
@@ -427,7 +553,7 @@ def _final_loss(loss_rows: list[dict]) -> float | None:
 
 def _loss_formula(mode: str) -> str:
     if mode == "multitask":
-        return "label_loss + rationale_loss_weight * rationale_loss"
+        return "label_loss + rationale_loss_weight * rationale_loss, or label_loss only when rationale is filtered out"
     return "loss"
 
 
@@ -437,10 +563,55 @@ def _num_label_rows_used(mode: str, num_optimizer_steps: int) -> int:
     return num_optimizer_steps
 
 
-def _num_rationale_rows_used(mode: str, num_optimizer_steps: int) -> int:
-    if mode == "multitask":
-        return num_optimizer_steps
-    return 0
+def _print_rationale_stats(train_rows: list[dict]) -> None:
+    label_rows = [row for row in train_rows if row.get("task") == "label"]
+    if not label_rows:
+        return
+    usable = sum(1 for row in label_rows if row.get("rationale_used"))
+    skipped_mismatch = sum(1 for row in label_rows if row.get("rationale_skip_reason") == "teacher_answer_mismatch")
+    skipped_missing_teacher = sum(1 for row in label_rows if row.get("rationale_skip_reason") == "missing_teacher_row")
+    skipped_missing_reasoning = sum(
+        1 for row in label_rows if row.get("rationale_skip_reason") == "missing_teacher_reasoning"
+    )
+    print(f"num original examples: {len(label_rows)}")
+    print(f"num examples with usable rationale: {usable}")
+    print(f"num rationale skipped teacher_answer_mismatch: {skipped_mismatch}")
+    print(f"num rationale skipped missing_teacher_row: {skipped_missing_teacher}")
+    print(f"num rationale skipped missing_teacher_reasoning: {skipped_missing_reasoning}")
+
+
+def _rationale_stats_from_loss_rows(loss_rows: list[dict]) -> dict:
+    return {
+        "num_rationale_rows_used": sum(1 for row in loss_rows if row.get("rationale_used")),
+        "num_rationale_skipped_teacher_answer_mismatch": sum(
+            1 for row in loss_rows if row.get("rationale_skip_reason") == "teacher_answer_mismatch"
+        ),
+        "num_rationale_skipped_missing_teacher_row": sum(
+            1 for row in loss_rows if row.get("rationale_skip_reason") == "missing_teacher_row"
+        ),
+        "num_rationale_skipped_missing_teacher_reasoning": sum(
+            1 for row in loss_rows if row.get("rationale_skip_reason") == "missing_teacher_reasoning"
+        ),
+        "num_rationale_skipped_missing_rationale_row": sum(
+            1 for row in loss_rows if row.get("rationale_skip_reason") == "missing_rationale_row"
+        ),
+    }
+
+
+def _rationale_stats_from_train_rows(train_rows: list[dict]) -> dict:
+    label_rows = [row for row in train_rows if row.get("task") == "label"]
+    return {
+        "num_examples_with_usable_rationale": sum(1 for row in label_rows if row.get("rationale_used")),
+        "num_rationale_skipped_teacher_answer_mismatch": sum(
+            1 for row in label_rows if row.get("rationale_skip_reason") == "teacher_answer_mismatch"
+        ),
+        "num_rationale_skipped_missing_teacher_row": sum(
+            1 for row in label_rows if row.get("rationale_skip_reason") == "missing_teacher_row"
+        ),
+        "num_rationale_skipped_missing_teacher_reasoning": sum(
+            1 for row in label_rows if row.get("rationale_skip_reason") == "missing_teacher_reasoning"
+        ),
+    }
 
 
 def _write_json(payload: dict, path: Path) -> None:
