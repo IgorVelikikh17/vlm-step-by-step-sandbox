@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 from datasets import DatasetDict, load_dataset
 
 
@@ -44,6 +46,7 @@ def normalize_scienceqa_example(example: dict, dataset_config: dict) -> dict:
 
     return {
         "id": _example_id(example),
+        "source_index": example.get("source_index"),
         "image": example.get(dataset_config.get("image_column", "image")),
         "question": example.get(dataset_config.get("question_column", "question")),
         "choices": list(example.get(dataset_config.get("choices_column", "choices")) or []),
@@ -99,10 +102,21 @@ def _prepare_split(
     shuffle_seed: int,
     max_samples: int | None,
 ):
+    split = _add_source_index(split)
     if only_with_image:
         split = split.filter(lambda example: example[image_column] is not None)
     if shuffle:
-        split = split.shuffle(seed=shuffle_seed)
+        split = _shuffle_split(split, shuffle_seed)
     if max_samples is not None:
         split = split.select(range(min(max_samples, len(split))))
     return split
+
+
+def _add_source_index(split):
+    return split.map(lambda example, index: {"source_index": index}, with_indices=True)
+
+
+def _shuffle_split(split, shuffle_seed: int):
+    indices = list(range(len(split)))
+    random.Random(shuffle_seed).shuffle(indices)
+    return split.select(indices)

@@ -51,6 +51,7 @@ def main() -> None:
         print()
         print(f"--- validation example {index} ---")
         print(f"id: {display_id}")
+        print(f"source_index: {example['source_index']}")
         print(f"has image: {example['image'] is not None}")
         print(f"question: {example['question']}")
         print("choices:")
@@ -87,7 +88,12 @@ def _print_split_preview(split_name: str, split, dataset_config: dict) -> None:
     print(f"{split_name} first questions:")
     for index in range(min(3, len(split))):
         example = normalize_scienceqa_example(split[index], dataset_config)
-        print(f"  {split_name}_{index}: {example['answer_letter']} | {example['question']}")
+        print(
+            f"  {split_name}_{index}: "
+            f"source_index={example['source_index']} | "
+            f"answer={example['answer_letter']} | "
+            f"{example['question']}"
+        )
 
     distribution = _gold_distribution(split, dataset_config)
     print(f"{split_name} gold distribution:")

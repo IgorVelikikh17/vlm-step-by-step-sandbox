@@ -69,6 +69,7 @@ def main() -> None:
         print(f"--- student row {index} ---")
         print(f"cache_id: {row['cache_id']}")
         print(f"base_cache_id: {row.get('base_cache_id')}")
+        print(f"source_index: {row.get('source_index')}")
         print(f"task: {row.get('task')}")
         print(f"prompt_mode: {row.get('prompt_mode')}")
         print(f"question: {row['question']}")

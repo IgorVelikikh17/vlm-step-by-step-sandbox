@@ -41,6 +41,7 @@ def main() -> None:
         print()
         print(f"--- cache row {index} ---")
         print(f"cache_id: {row.get('cache_id')}")
+        print(f"source_index: {row.get('source_index')}")
         print(f"teacher_type: {row.get('teacher_type')}")
         print(f"teacher_model_name: {row.get('teacher_model_name')}")
         print(f"question: {row.get('question')}")

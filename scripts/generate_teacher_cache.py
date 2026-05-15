@@ -96,6 +96,7 @@ def main() -> None:
                 "split": args.split,
                 "local_index": local_index,
                 "example_id": example["id"],
+                "source_index": example["source_index"],
                 "question": example["question"],
                 "choices": example["choices"],
                 "gold_answer": example["answer_letter"],
