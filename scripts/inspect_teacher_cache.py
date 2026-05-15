@@ -41,6 +41,8 @@ def main() -> None:
         print()
         print(f"--- cache row {index} ---")
         print(f"cache_id: {row.get('cache_id')}")
+        print(f"teacher_type: {row.get('teacher_type')}")
+        print(f"teacher_model_name: {row.get('teacher_model_name')}")
         print(f"question: {row.get('question')}")
         print("choices:")
         for choice_index, choice in enumerate(row.get("choices", [])):

@@ -6,18 +6,23 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for relative in ["src/datasets", "src/prompts", "src/teacher", "src/utils"]:
+for relative in ["src/datasets", "src/evaluation", "src/prompts", "src/teacher", "src/utils"]:
     sys.path.insert(0, str(ROOT / relative))
 
 from io_utils import load_yaml, resolve_project_path, write_jsonl  # noqa: E402
 from mock_teacher import generate_mock_teacher_output  # noqa: E402
+from qwen_vl_teacher import (  # noqa: E402
+    format_qwen_teacher_prompt,
+    generate_qwen_teacher_output,
+    load_qwen_vl_teacher,
+)
 from scienceqa import load_scienceqa_image_examples, normalize_scienceqa_example  # noqa: E402
 from seed import set_seed  # noqa: E402
 from vlm_step_by_step import format_scienceqa_prompt  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate a mock ScienceQA teacher cache.")
+    parser = argparse.ArgumentParser(description="Generate a ScienceQA teacher cache.")
     parser.add_argument("--config", type=str, default="src/configs/experiment/debug.yaml")
     parser.add_argument("--split", type=str, choices=["train", "validation"], default="train")
     parser.add_argument(
@@ -27,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--use_gold_answer", action="store_true")
+    parser.add_argument("--teacher_type", type=str, choices=["mock", "qwen"], default="mock")
+    parser.add_argument("--teacher_model_name", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
+    parser.add_argument("--teacher_device", type=str, choices=["auto", "cpu", "cuda", "mps"], default="auto")
+    parser.add_argument("--teacher_dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
+    parser.add_argument("--teacher_max_new_tokens", type=int, default=128)
+    parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
 
@@ -42,11 +53,36 @@ def main() -> None:
     max_samples = args.max_samples if args.max_samples is not None else len(split)
     max_samples = min(max_samples, len(split))
 
+    model = None
+    processor = None
+    if args.teacher_type == "qwen" and not args.dry_run:
+        model, processor = load_qwen_vl_teacher(
+            model_name=args.teacher_model_name,
+            device=args.teacher_device,
+            dtype=args.teacher_dtype,
+        )
+
     rows = []
     for local_index in range(max_samples):
         example = normalize_scienceqa_example(split[local_index], dataset_config)
-        prompt = format_scienceqa_prompt(example, dataset_config, mode="reasoning_answer")
-        teacher_output = generate_mock_teacher_output(example, use_gold_answer=args.use_gold_answer)
+        prompt = _teacher_prompt(example, dataset_config, args.teacher_type)
+
+        if args.dry_run:
+            print(f"dry_run: true")
+            print(f"teacher_type: {args.teacher_type}")
+            print(f"split: {args.split}")
+            print(f"max_samples: {max_samples}")
+            print("first teacher prompt:")
+            print(prompt)
+            return
+
+        teacher_output = _generate_teacher_output(
+            args=args,
+            example=example,
+            prompt=prompt,
+            model=model,
+            processor=processor,
+        )
 
         rows.append(
             {
@@ -59,6 +95,8 @@ def main() -> None:
                 "gold_answer": example["answer_letter"],
                 "prompt_mode": "reasoning_answer",
                 "prompt": prompt,
+                "teacher_type": args.teacher_type,
+                "teacher_model_name": _teacher_model_name(args),
                 "teacher_reasoning": teacher_output["teacher_reasoning"],
                 "teacher_answer": teacher_output["teacher_answer"],
                 "teacher_raw_output": teacher_output["teacher_raw_output"],
@@ -73,6 +111,36 @@ def main() -> None:
     if rows:
         print("first saved example preview:")
         print(json.dumps(rows[0], ensure_ascii=False, indent=2))
+
+
+def _teacher_prompt(example: dict, dataset_config: dict, teacher_type: str) -> str:
+    if teacher_type == "qwen":
+        return format_qwen_teacher_prompt(example)
+    return format_scienceqa_prompt(example, dataset_config, mode="reasoning_answer")
+
+
+def _generate_teacher_output(
+    args: argparse.Namespace,
+    example: dict,
+    prompt: str,
+    model,
+    processor,
+) -> dict:
+    if args.teacher_type == "qwen":
+        return generate_qwen_teacher_output(
+            model=model,
+            processor=processor,
+            image=example["image"],
+            prompt=prompt,
+            max_new_tokens=args.teacher_max_new_tokens,
+        )
+    return generate_mock_teacher_output(example, use_gold_answer=args.use_gold_answer)
+
+
+def _teacher_model_name(args: argparse.Namespace) -> str:
+    if args.teacher_type == "qwen":
+        return args.teacher_model_name
+    return "mock"
 
 
 if __name__ == "__main__":
