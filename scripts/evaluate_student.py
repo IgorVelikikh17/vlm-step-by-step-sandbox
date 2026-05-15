@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label_source", type=str, choices=["gold", "teacher"], default="gold")
     parser.add_argument("--max_eval_samples", type=int, default=8)
     parser.add_argument("--max_new_tokens", type=int, default=32)
+    parser.add_argument("--preview_count", type=int, default=3)
     parser.add_argument("--device", type=str, choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
     parser.add_argument("--output_dir", type=str, default="results/eval_smoke")
@@ -47,6 +48,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.preview_count < 0:
+        raise ValueError("--preview_count must be >= 0")
+
     experiment_config = load_yaml(ROOT / args.config)
     dataset_config = load_yaml(resolve_project_path(ROOT, experiment_config["dataset_config"]))
     model_config = load_yaml(ROOT / args.model_config)
@@ -78,6 +82,7 @@ def main() -> None:
     print(f"mode: {args.mode}")
     print(f"label_source: {args.label_source}")
     print(f"student rows for evaluation: {len(student_rows)}")
+    print(f"preview_count: {args.preview_count}")
     print(f"output dir: {output_dir}")
 
     if args.dry_run:
@@ -111,15 +116,21 @@ def main() -> None:
         prediction = _prediction_row(row, raw_output, pred_answer, is_correct)
         predictions.append(prediction)
 
+        if index < args.preview_count:
+            print()
+            print(f"--- evaluation row {index} ---")
+            print(f"cache_id: {row['cache_id']}")
+            print(f"gold_answer: {row['gold_answer']}")
+            print(f"teacher_answer: {row.get('teacher_answer')}")
+            print(f"pred_answer: {pred_answer}")
+            print(f"is_correct: {is_correct}")
+            print("raw output:")
+            print(raw_output)
+
+    if len(student_rows) > args.preview_count:
+        skipped = len(student_rows) - args.preview_count
         print()
-        print(f"--- evaluation row {index} ---")
-        print(f"cache_id: {row['cache_id']}")
-        print(f"gold_answer: {row['gold_answer']}")
-        print(f"teacher_answer: {row.get('teacher_answer')}")
-        print(f"pred_answer: {pred_answer}")
-        print(f"is_correct: {is_correct}")
-        print("raw output:")
-        print(raw_output)
+        print(f"... skipped detailed printing for remaining {skipped} examples ...")
 
     metrics = _compute_metrics(predictions, model_name_or_path, args)
     output_dir.mkdir(parents=True, exist_ok=True)

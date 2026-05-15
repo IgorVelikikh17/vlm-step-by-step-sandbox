@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
     parser.add_argument("--output_root", type=str, default="outputs/labeled_reducing_data")
     parser.add_argument("--results_dir", type=str, default="results/labeled_reducing_data")
+    parser.add_argument("--multitask_method_name", type=str, default="multitask_gold")
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
@@ -46,7 +47,7 @@ def main() -> None:
     _validate_args(args)
     teacher_cache_path = resolve_project_path(ROOT, args.teacher_cache_path)
     if not teacher_cache_path.exists():
-        _raise_missing_teacher_cache(teacher_cache_path, max(args.train_sizes))
+        _raise_missing_teacher_cache(args, teacher_cache_path, max(args.train_sizes))
 
     experiment_config = load_yaml(ROOT / args.config)
     dataset_config = load_yaml(resolve_project_path(ROOT, experiment_config["dataset_config"]))
@@ -138,7 +139,7 @@ def _build_runs(args: argparse.Namespace) -> list[dict]:
             "rationale_loss_weight": "",
         },
         {
-            "name": "multitask_gold",
+            "name": args.multitask_method_name,
             "train_mode": "multitask",
             "eval_mode": "multitask_label",
             "rationale_loss_weight": args.rationale_loss_weight,
@@ -322,15 +323,32 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--train_sizes values must be >= 1")
 
 
-def _raise_missing_teacher_cache(path: Path, max_train_size: int) -> None:
-    command = (
-        "python scripts/generate_teacher_cache.py "
-        "--config src/configs/experiment/debug.yaml "
-        "--split train "
-        f"--output_path {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path} "
-        f"--max_samples {max_train_size} "
-        "--use_gold_answer"
-    )
+def _raise_missing_teacher_cache(args: argparse.Namespace, path: Path, max_train_size: int) -> None:
+    output_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+    if "qwen" in str(path).lower():
+        command = (
+            "python scripts/generate_teacher_cache.py "
+            f"--config {args.config} "
+            "--split train "
+            f"--output_path {output_path} "
+            f"--max_samples {max_train_size} "
+            "--teacher_type qwen "
+            "--teacher_model_name Qwen/Qwen2.5-VL-3B-Instruct "
+            "--teacher_device cuda "
+            "--teacher_dtype bfloat16 "
+            "--teacher_max_new_tokens 256 "
+            "--retry_on_parse_failure "
+            "--preview_count 2"
+        )
+    else:
+        command = (
+            "python scripts/generate_teacher_cache.py "
+            f"--config {args.config} "
+            "--split train "
+            f"--output_path {output_path} "
+            f"--max_samples {max_train_size} "
+            "--use_gold_answer"
+        )
     raise FileNotFoundError(
         f"Teacher cache does not exist: {path}\n"
         "Generate it first with:\n"

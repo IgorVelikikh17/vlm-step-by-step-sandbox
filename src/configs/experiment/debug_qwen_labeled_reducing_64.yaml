@@ -1,0 +1,12 @@
+experiment_name: vlm_step_by_step_qwen_labeled_reducing_64_debug
+seed: 42
+
+dataset_config: src/configs/dataset/scienceqa.yaml
+student_model_config: src/configs/model/smolvlm_500m.yaml
+teacher_config: src/configs/teacher/qwen_vl.yaml
+
+max_train_samples: 64
+max_eval_samples: 64
+
+output_dir: artifacts/debug_qwen_labeled_reducing_64
+prompt_preview_count: 2

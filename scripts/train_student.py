@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning_rate", type=float, default=1e-6)
     parser.add_argument("--rationale_loss_weight", type=float, default=1.0)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
+    parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--device", type=str, choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
     parser.add_argument("--output_dir", type=str, default="outputs/train_debug_answer_only_gold")
@@ -48,6 +49,8 @@ def main() -> None:
     args = parse_args()
     if args.batch_size != 1:
         raise ValueError("train_student.py currently supports batch_size=1 for simple task-level loss weighting.")
+    if args.log_every < 1:
+        raise ValueError("--log_every must be >= 1")
 
     experiment_config = load_yaml(ROOT / args.config)
     dataset_config = load_yaml(resolve_project_path(ROOT, experiment_config["dataset_config"]))
@@ -86,6 +89,7 @@ def main() -> None:
     print(f"student rows ready: {len(train_rows)}")
     print(f"max_steps: {args.max_steps}")
     print(f"batch_size: {args.batch_size}")
+    print(f"log_every: {args.log_every}")
     print(f"rationale_loss_weight: {args.rationale_loss_weight}")
     print(f"output dir: {output_dir}")
 
@@ -194,12 +198,13 @@ def _run_answer_only_training(
 
         loss_row = _answer_only_loss_row(step_index + 1, row, loss)
         loss_rows.append(loss_row)
-        print(
-            f"step: {loss_row['step']} "
-            f"loss: {loss_row['loss']:.6f} "
-            f"task: {loss_row['task']} "
-            f"cache_id: {loss_row['cache_id']}"
-        )
+        if _should_log_step(loss_row["step"], args.max_steps, args.log_every):
+            print(
+                f"step: {loss_row['step']} "
+                f"loss: {loss_row['loss']:.6f} "
+                f"task: {loss_row['task']} "
+                f"cache_id: {loss_row['cache_id']}"
+            )
 
     return loss_rows, None
 
@@ -250,16 +255,21 @@ def _run_multitask_training(
         optimizer.zero_grad()
 
         loss_rows.append(loss_row)
-        print(
-            f"step: {loss_row['step']} "
-            f"total_loss: {loss_row['total_loss']:.6f} "
-            f"label_loss: {loss_row['label_loss']:.6f} "
-            f"rationale_loss: {loss_row['rationale_loss']:.6f} "
-            f"rationale_loss_weight: {loss_row['rationale_loss_weight']} "
-            f"base_cache_id: {loss_row['base_cache_id']}"
-        )
+        if _should_log_step(loss_row["step"], args.max_steps, args.log_every):
+            print(
+                f"step: {loss_row['step']} "
+                f"total_loss: {loss_row['total_loss']:.6f} "
+                f"label_loss: {loss_row['label_loss']:.6f} "
+                f"rationale_loss: {loss_row['rationale_loss']:.6f} "
+                f"rationale_loss_weight: {loss_row['rationale_loss_weight']} "
+                f"base_cache_id: {loss_row['base_cache_id']}"
+            )
 
     return loss_rows, None
+
+
+def _should_log_step(step: int, max_steps: int, log_every: int) -> bool:
+    return step == 1 or step % log_every == 0 or step == max_steps
 
 
 def _validate_multitask_pairs(train_rows: list[dict]) -> None:
@@ -367,6 +377,7 @@ def _training_config(
         "learning_rate": args.learning_rate,
         "rationale_loss_weight": args.rationale_loss_weight,
         "max_grad_norm": args.max_grad_norm,
+        "log_every": args.log_every,
         "device": args.device,
         "dtype": args.dtype,
         "output_dir": args.output_dir,

@@ -39,12 +39,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
     parser.add_argument("--teacher_max_new_tokens", type=int, default=256)
     parser.add_argument("--retry_on_parse_failure", action="store_true")
+    parser.add_argument("--preview_count", type=int, default=1)
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.preview_count < 0:
+        raise ValueError("--preview_count must be >= 0")
+
     experiment_config = load_yaml(ROOT / args.config)
     dataset_config = load_yaml(resolve_project_path(ROOT, experiment_config["dataset_config"]))
 
@@ -112,9 +116,8 @@ def main() -> None:
 
     print(f"output path: {output_path}")
     print(f"saved examples: {len(rows)}")
-    if rows:
-        print("first saved example preview:")
-        print(json.dumps(rows[0], ensure_ascii=False, indent=2))
+    print(f"parse failures: {_count_parse_failures(rows)}")
+    _print_row_previews(rows, args.preview_count)
 
 
 def _teacher_prompt(example: dict, dataset_config: dict, teacher_type: str) -> str:
@@ -161,6 +164,20 @@ def _teacher_model_name(args: argparse.Namespace) -> str:
     if args.teacher_type == "qwen":
         return args.teacher_model_name
     return "mock"
+
+
+def _count_parse_failures(rows: list[dict]) -> int:
+    return sum(1 for row in rows if row.get("teacher_answer") is None)
+
+
+def _print_row_previews(rows: list[dict], preview_count: int) -> None:
+    preview_count = min(preview_count, len(rows))
+    for index in range(preview_count):
+        print(f"--- preview row {index} ---")
+        print(json.dumps(rows[index], ensure_ascii=False, indent=2))
+
+    if len(rows) > preview_count:
+        print(f"... skipped preview for remaining {len(rows) - preview_count} rows ...")
 
 
 if __name__ == "__main__":
