@@ -83,6 +83,52 @@ multitask:
 | multitask better | 10 |
 | both wrong but changed | 9 |
 
+### SmolVLM-256M, train=512, eval=512, 2 epochs
+
+Setup:
+
+- student: `HuggingFaceTB/SmolVLM-256M-Instruct`
+- teacher: `Qwen/Qwen2.5-VL-3B-Instruct`
+- train size: 512 ScienceQA image examples
+- eval size: 512 ScienceQA image examples
+- learning rate: `1e-6`
+- batch size: 1
+- filtered rationale mode: enabled
+- filter rule: use rationale loss only when `teacher_answer == gold_answer`
+- compared rationale weights: `lambda=0.3` and `lambda=0.5`
+
+Teacher cache quality:
+
+| Teacher | Rows | Correct | Accuracy | Parse failures |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen/Qwen2.5-VL-3B-Instruct | 512 | 381 / 512 | 74.41% | 0.0% |
+
+Main accuracy results:
+
+| Method | Correct | Accuracy |
+| --- | ---: | ---: |
+| base | 232 / 512 | 45.31% |
+| answer_only_gold | 249 / 512 | 48.63% |
+| filtered multitask, lambda=0.3 | 260 / 512 | 50.78% |
+| filtered multitask, lambda=0.5 | 261 / 512 | 50.98% |
+
+Parse failure rates:
+
+| Method | Parse failure rate |
+| --- | ---: |
+| base | 22.46% |
+| answer_only_gold | 17.97% |
+| filtered multitask, lambda=0.3 | 12.70% |
+| filtered multitask, lambda=0.5 | 12.89% |
+
+Prediction-level comparison:
+
+| Comparison | Different predictions | First method better | Second method better | Both wrong but changed |
+| --- | ---: | ---: | ---: | ---: |
+| answer_only vs lambda=0.3 | 58 | 12 | 23 | 23 |
+| answer_only vs lambda=0.5 | 60 | 12 | 24 | 24 |
+| lambda=0.3 vs lambda=0.5 | 14 | 3 | 4 | 7 |
+
 ## Interpretation
 
 For SmolVLM-500M, rationale supervision has not helped yet in the current
@@ -96,11 +142,22 @@ base and answer-only setups.
 
 The effect is still small, so it should not be treated as a final conclusion.
 
+On the 512-example SmolVLM-256M pilot run, filtered multitask training is more
+clearly better than both answer-only fine-tuning and the base model. It improves
+over answer-only by 11 correct examples for `lambda=0.3` and by 12 correct
+examples for `lambda=0.5`.
+
+The two rationale weights are nearly equivalent in this run. `lambda=0.5` is
+higher by only 1 correct example out of 512, so the current evidence supports
+filtered multitask rationale supervision for SmolVLM-256M but does not clearly
+prefer `lambda=0.5` over `lambda=0.3`.
+
 ## Limitations
 
-- The experiments use only 256 train and 256 evaluation examples.
+- The experiments are still pilot-scale. The largest current run uses 512 train
+  and 512 evaluation examples.
 - The teacher is imperfect: Qwen teacher accuracy is about 75% on the
-  256-example train subset.
+  current 256- and 512-example train subsets.
 - Some teacher rationales can contradict the gold label.
 - The current filtered multitask mode skips rationale loss when the teacher
   answer does not match the gold answer, but this is still a simple heuristic.
@@ -109,7 +166,7 @@ The effect is still small, so it should not be treated as a final conclusion.
 
 ## Next Experiments
 
-- Run larger train sizes, such as 512 and 1024 examples.
+- Run larger train sizes, such as 1024 examples.
 - Repeat key runs with multiple seeds.
 - Compare SmolVLM-256M and SmolVLM-500M under the same settings.
 - Sweep `rationale_loss_weight`, especially values below 1.0.
