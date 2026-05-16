@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 for relative in ["src/datasets", "src/evaluation", "src/prompts", "src/teacher", "src/utils"]:
     sys.path.insert(0, str(ROOT / relative))
 

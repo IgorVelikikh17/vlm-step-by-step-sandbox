@@ -58,6 +58,8 @@ Not implemented yet:
 
 - `src/configs/` holds readable experiment, dataset, model, and teacher configs
 - `scripts/` contains direct command-line entrypoints
+- `scripts/dev/` contains inspection, smoke-test, and environment-check
+  utilities
 - `src/datasets/` contains the small ScienceQA loader helper
 - `src/prompts/` contains prompt formatting for VLM step-by-step answers
 - `src/utils/` keeps simple shared helpers
@@ -83,12 +85,13 @@ objects, callback stacks, and trainer frameworks.
 These scripts are kept intentionally. They make the pipeline easier to inspect
 and debug:
 
-- `scripts/inspect_scienceqa.py`
-- `scripts/inspect_teacher_cache.py`
-- `scripts/inspect_student_data.py`
-- `scripts/smoke_smolvlm_inference.py`
-- `scripts/train_student_smoke.py`
-- `scripts/check_vlm_environment.py`
+- `scripts/dev/inspect_scienceqa.py`
+- `scripts/dev/inspect_teacher_cache.py`
+- `scripts/dev/inspect_student_data.py`
+- `scripts/dev/smoke_smolvlm_inference.py`
+- `scripts/dev/train_student_smoke.py`
+- `scripts/dev/check_vlm_environment.py`
+- `scripts/dev/run_debug_labeled_comparison.py`
 
 ## Install
 
@@ -105,13 +108,13 @@ This command only checks that the ScienceQA config and image filtering shape
 make sense. It does not train or evaluate a model.
 
 ```bash
-python scripts/inspect_scienceqa.py --config src/configs/experiment/debug.yaml
+python scripts/dev/inspect_scienceqa.py --config src/configs/experiment/debug.yaml
 ```
 
 To inspect the current 256-example shuffled experiment config:
 
 ```bash
-python scripts/inspect_scienceqa.py \
+python scripts/dev/inspect_scienceqa.py \
   --config src/configs/experiment/debug_qwen_labeled_reducing_256.yaml
 ```
 
