@@ -9,42 +9,50 @@ to multimodal multiple-choice question answering on ScienceQA.
 
 ## Goal
 
-Build the first safe skeleton for a future VLM distillation coursework project.
+Build a small, readable VLM version of the "Distilling Step-by-Step" idea for
+ScienceQA image examples.
 
-The intended full project is:
+The current task is:
 
-- teacher: a larger VLM, planned as `Qwen/Qwen2.5-VL-7B-Instruct-AWQ`
-  with a smaller Qwen-VL fallback later
-- student: a smaller VLM, starting with
-  `HuggingFaceTB/SmolVLM-500M-Instruct`
-- later model-size experiment: SmolVLM 256M vs 500M
-- dataset: ScienceQA examples that contain images
-- task: image + question + choices -> reasoning + final answer letter
+```text
+image + question + choices -> final answer letter
+```
 
-In simple terms: the teacher should write both the answer and a short
-explanation. The student later learns not only “A/B/C/D”, but also the
-intermediate reasoning text. That is the step-by-step distillation idea.
+The project compares answer-only fine-tuning with multitask rationale training:
+
+```text
+[label] + input -> gold answer
+[rationale] + input -> teacher rationale
+```
+
+The teacher is `Qwen/Qwen2.5-VL-3B-Instruct`. The student models are
+`HuggingFaceTB/SmolVLM-500M-Instruct` and
+`HuggingFaceTB/SmolVLM-256M-Instruct`.
 
 ## Current Scope
 
-This milestone only prepares the project skeleton.
-
 Implemented now:
 
-- VLM-specific README and architecture notes
-- minimal YAML configs under `src/configs/`
-- a small ScienceQA image-example inspection script
-- simple prompt formatting for reasoning plus final answer letter
-- reused lightweight YAML/seed utilities from the previous sandbox
+- ScienceQA image-only data loading with reproducible shuffled subsets
+- prompt formatting for answer-only and multitask training
+- Qwen teacher cache generation
+- SmolVLM inference smoke tests
+- SmolVLM student training
+- answer-only baseline
+- multitask rationale training
+- filtered multitask rationale training
+- evaluation with `metrics.json` and `predictions.jsonl`
+- prediction analysis and reducing-data runners
+
+Current pilot results are summarized in [EXPERIMENTS.md](EXPERIMENTS.md).
 
 Not implemented yet:
 
-- teacher generation
-- student fine-tuning
-- evaluation loop
-- model-size comparison
-- AWQ or quantized inference setup
+- full-scale benchmark runs
 - Comet/W&B experiment tracking
+- LoRA/QLoRA
+- unlabeled or pseudo-labeled setup
+- large model-size experiment beyond pilot runs
 
 ## Project Style
 
@@ -56,6 +64,31 @@ Not implemented yet:
 
 The code intentionally avoids registries, factories, dataclass-heavy config
 objects, callback stacks, and trainer frameworks.
+
+## Main Scripts
+
+- `scripts/generate_teacher_cache.py`: generate mock or Qwen teacher outputs
+  and save them as JSONL.
+- `scripts/train_student.py`: train SmolVLM with answer-only or multitask
+  objectives.
+- `scripts/evaluate_student.py`: evaluate base models or saved checkpoints.
+- `scripts/run_labeled_reducing_data.py`: run answer-only vs multitask
+  comparisons for selected train sizes.
+- `scripts/analyze_predictions.py`: inspect prediction distributions,
+  parse failures, and common errors.
+- `scripts/plot_labeled_reducing_data.py`: plot accuracy vs train size.
+
+## Verification Utilities
+
+These scripts are kept intentionally. They make the pipeline easier to inspect
+and debug:
+
+- `scripts/inspect_scienceqa.py`
+- `scripts/inspect_teacher_cache.py`
+- `scripts/inspect_student_data.py`
+- `scripts/smoke_smolvlm_inference.py`
+- `scripts/train_student_smoke.py`
+- `scripts/check_vlm_environment.py`
 
 ## Install
 
@@ -73,6 +106,13 @@ make sense. It does not train or evaluate a model.
 
 ```bash
 python scripts/inspect_scienceqa.py --config src/configs/experiment/debug.yaml
+```
+
+To inspect the current 256-example shuffled experiment config:
+
+```bash
+python scripts/inspect_scienceqa.py \
+  --config src/configs/experiment/debug_qwen_labeled_reducing_256.yaml
 ```
 
 If Hugging Face cannot download the dataset in your environment, rerun later
