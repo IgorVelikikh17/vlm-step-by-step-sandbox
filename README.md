@@ -70,7 +70,8 @@ objects, callback stacks, and trainer frameworks.
 ## Main Scripts
 
 - `scripts/generate_teacher_cache.py`: generate mock or Qwen teacher outputs
-  and save them as JSONL.
+  and save them as JSONL. Use `--resume` for long Qwen cache generation runs
+  so existing `cache_id` rows are skipped and new rows are appended safely.
 - `scripts/train_student.py`: train SmolVLM with answer-only or multitask
   objectives.
 - `scripts/evaluate_student.py`: evaluate base models or saved checkpoints.

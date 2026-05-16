@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher_dtype", type=str, choices=["auto", "float32", "float16", "bfloat16"], default="auto")
     parser.add_argument("--teacher_max_new_tokens", type=int, default=256)
     parser.add_argument("--retry_on_parse_failure", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--preview_count", type=int, default=1)
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
@@ -58,6 +59,16 @@ def main() -> None:
 
     max_samples = args.max_samples if args.max_samples is not None else len(split)
     max_samples = min(max_samples, len(split))
+    output_path = resolve_project_path(ROOT, args.output_path)
+
+    existing_rows = _read_existing_rows(output_path) if args.resume else []
+    existing_cache_ids = {row.get("cache_id") for row in existing_rows}
+    skipped_existing_rows = 0
+    newly_generated_rows = 0
+    print(f"output path: {output_path}")
+    print(f"resume: {args.resume}")
+    print(f"existing rows loaded: {len(existing_rows)}")
+    print(f"target rows for this run: {max_samples}")
 
     model = None
     processor = None
@@ -69,56 +80,70 @@ def main() -> None:
         )
 
     rows = []
-    for local_index in range(max_samples):
-        example = normalize_scienceqa_example(split[local_index], dataset_config)
-        prompt = _teacher_prompt(example, dataset_config, args.teacher_type)
+    append_handle = None
+    try:
+        if args.resume:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            append_handle = output_path.open("a", encoding="utf-8")
 
-        if args.dry_run:
-            print(f"dry_run: true")
-            print(f"teacher_type: {args.teacher_type}")
-            print(f"split: {args.split}")
-            print(f"max_samples: {max_samples}")
-            print("first teacher prompt:")
-            print(prompt)
-            return
+        for local_index in range(max_samples):
+            cache_id = f"{args.split}_{local_index}"
+            if args.resume and cache_id in existing_cache_ids:
+                skipped_existing_rows += 1
+                continue
 
-        teacher_output = _generate_teacher_output(
-            args=args,
-            example=example,
-            prompt=prompt,
-            model=model,
-            processor=processor,
-        )
+            example = normalize_scienceqa_example(split[local_index], dataset_config)
+            prompt = _teacher_prompt(example, dataset_config, args.teacher_type)
 
-        rows.append(
-            {
-                "cache_id": f"{args.split}_{local_index}",
-                "split": args.split,
-                "local_index": local_index,
-                "example_id": example["id"],
-                "source_index": example["source_index"],
-                "question": example["question"],
-                "choices": example["choices"],
-                "gold_answer": example["answer_letter"],
-                "prompt_mode": "reasoning_answer",
-                "prompt": prompt,
-                "teacher_type": args.teacher_type,
-                "teacher_model_name": _teacher_model_name(args),
-                "teacher_reasoning": teacher_output["teacher_reasoning"],
-                "teacher_answer": teacher_output["teacher_answer"],
-                "teacher_raw_output": teacher_output["teacher_raw_output"],
-                "teacher_retry_used": teacher_output.get("teacher_retry_used", False),
-                "teacher_first_raw_output": teacher_output.get("teacher_first_raw_output"),
-            }
-        )
+            if args.dry_run:
+                print(f"dry_run: true")
+                print(f"teacher_type: {args.teacher_type}")
+                print(f"split: {args.split}")
+                print(f"max_samples: {max_samples}")
+                print("first teacher prompt:")
+                print(prompt)
+                return
 
-    output_path = resolve_project_path(ROOT, args.output_path)
-    write_jsonl(rows, output_path)
+            if args.resume:
+                print(f"generating cache_id: {cache_id}")
+            teacher_output = _generate_teacher_output(
+                args=args,
+                example=example,
+                prompt=prompt,
+                model=model,
+                processor=processor,
+            )
 
-    print(f"output path: {output_path}")
-    print(f"saved examples: {len(rows)}")
-    print(f"parse failures: {_count_parse_failures(rows)}")
-    _print_row_previews(rows, args.preview_count)
+            row = _teacher_cache_row(
+                args=args,
+                cache_id=cache_id,
+                local_index=local_index,
+                example=example,
+                prompt=prompt,
+                teacher_output=teacher_output,
+            )
+            rows.append(row)
+            newly_generated_rows += 1
+
+            if args.resume:
+                _append_jsonl_row(append_handle, row)
+    finally:
+        if append_handle is not None:
+            append_handle.close()
+
+    if not args.resume:
+        write_jsonl(rows, output_path)
+
+    all_available_rows = existing_rows + rows if args.resume else rows
+    final_available_rows = len(all_available_rows)
+    preview_rows = rows if rows else existing_rows
+    print(f"skipped existing rows: {skipped_existing_rows}")
+    print(f"newly generated rows: {newly_generated_rows}")
+    print(f"final total rows expected: {max_samples}")
+    print(f"final total rows available: {final_available_rows}")
+    print(f"saved examples: {final_available_rows}")
+    print(f"parse failures in available rows: {_count_parse_failures(all_available_rows)}")
+    _print_row_previews(preview_rows, args.preview_count)
 
 
 def _teacher_prompt(example: dict, dataset_config: dict, teacher_type: str) -> str:
@@ -165,6 +190,57 @@ def _teacher_model_name(args: argparse.Namespace) -> str:
     if args.teacher_type == "qwen":
         return args.teacher_model_name
     return "mock"
+
+
+def _teacher_cache_row(
+    args: argparse.Namespace,
+    cache_id: str,
+    local_index: int,
+    example: dict,
+    prompt: str,
+    teacher_output: dict,
+) -> dict:
+    return {
+        "cache_id": cache_id,
+        "split": args.split,
+        "local_index": local_index,
+        "example_id": example["id"],
+        "source_index": example["source_index"],
+        "question": example["question"],
+        "choices": example["choices"],
+        "gold_answer": example["answer_letter"],
+        "prompt_mode": "reasoning_answer",
+        "prompt": prompt,
+        "teacher_type": args.teacher_type,
+        "teacher_model_name": _teacher_model_name(args),
+        "teacher_reasoning": teacher_output["teacher_reasoning"],
+        "teacher_answer": teacher_output["teacher_answer"],
+        "teacher_raw_output": teacher_output["teacher_raw_output"],
+        "teacher_retry_used": teacher_output.get("teacher_retry_used", False),
+        "teacher_first_raw_output": teacher_output.get("teacher_first_raw_output"),
+    }
+
+
+def _read_existing_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as error:
+                print(f"warning: ignoring malformed JSONL line {line_number} in {path}: {error}")
+    return rows
+
+
+def _append_jsonl_row(handle, row: dict) -> None:
+    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    handle.flush()
 
 
 def _count_parse_failures(rows: list[dict]) -> int:
