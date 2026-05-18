@@ -127,7 +127,6 @@ def main() -> None:
     collator = StepByStepDataCollator(processor=processor, mode=args.mode)
     training_args = TrainingArguments(
         output_dir=str(output_dir),
-        overwrite_output_dir=True,
         learning_rate=args.learning_rate,
         num_train_epochs=args.num_train_epochs,
         max_steps=args.max_steps if args.max_steps is not None else -1,
