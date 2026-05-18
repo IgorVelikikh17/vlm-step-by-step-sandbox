@@ -1,0 +1,17 @@
+experiment_name: scienceqa_qwen_full
+
+seed: 42
+
+dataset_config: src/configs/dataset/scienceqa.yaml
+student_model_config: src/configs/model/smolvlm_500m.yaml
+teacher_config: src/configs/teacher/qwen_vl.yaml
+
+max_train_samples: 100000
+max_eval_samples: 100000
+
+shuffle_train: true
+shuffle_eval: true
+shuffle_seed: 42
+
+output_dir: artifacts/scienceqa_qwen_full
+prompt_preview_count: 2

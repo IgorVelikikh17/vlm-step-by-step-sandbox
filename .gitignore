@@ -31,3 +31,9 @@ huggingface/
 !src/datasets/**
 src/datasets/__pycache__/
 src/datasets/**/*.pyc
+
+# Keep most generated data ignored, but allow the small reproducible full teacher cache.
+!data/
+!data/processed/
+!data/processed/teacher_cache/
+!data/processed/teacher_cache/scienceqa_qwen_train_full_shuffled.jsonl
