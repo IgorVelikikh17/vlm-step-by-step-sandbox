@@ -36,6 +36,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train_size", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="outputs/train_hf_trainer_answer_only")
     parser.add_argument("--learning_rate", type=float, default=1e-6)
+    parser.add_argument("--lr_scheduler_type", type=str, default="linear")
+    parser.add_argument("--warmup_ratio", type=float, default=0.0)
+    parser.add_argument("--warmup_steps", type=int, default=0)
     parser.add_argument("--num_train_epochs", type=float, default=1.0)
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--per_device_train_batch_size", type=int, default=1)
@@ -128,6 +131,9 @@ def main() -> None:
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
+        warmup_ratio=args.warmup_ratio,
+        warmup_steps=args.warmup_steps,
         num_train_epochs=args.num_train_epochs,
         max_steps=args.max_steps if args.max_steps is not None else -1,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -402,6 +408,9 @@ def run_config(
         "train_size": args.train_size,
         "output_dir": args.output_dir,
         "learning_rate": args.learning_rate,
+        "lr_scheduler_type": args.lr_scheduler_type,
+        "warmup_ratio": args.warmup_ratio,
+        "warmup_steps": args.warmup_steps,
         "num_train_epochs": args.num_train_epochs,
         "max_steps": args.max_steps,
         "per_device_train_batch_size": args.per_device_train_batch_size,
