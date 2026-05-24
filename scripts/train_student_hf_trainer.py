@@ -33,6 +33,13 @@ def parse_args() -> argparse.Namespace:
         default="data/processed/teacher_cache/scienceqa_mock_train_debug.jsonl",
     )
     parser.add_argument("--mode", type=str, choices=["answer_only", "filtered_multitask"], default="answer_only")
+    parser.add_argument("--label_source", type=str, choices=["gold", "teacher"], default="gold")
+    parser.add_argument(
+        "--rationale_filter",
+        type=str,
+        choices=["teacher_matches_gold", "none"],
+        default="teacher_matches_gold",
+    )
     parser.add_argument("--train_size", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="outputs/train_hf_trainer_answer_only")
     parser.add_argument("--learning_rate", type=float, default=1e-6)
@@ -69,12 +76,14 @@ def main() -> None:
     train_split = splits["train"]
     selected_indices = stratified_train_indices(train_split, dataset_config, args.train_size, seed)
     teacher_rows = read_teacher_cache(teacher_cache_path)
-    train_examples = build_trainer_examples(
+    train_examples, build_stats = build_trainer_examples(
         split_examples=train_split,
         selected_indices=selected_indices,
         dataset_config=dataset_config,
         teacher_rows=teacher_rows,
         mode=args.mode,
+        label_source=args.label_source,
+        rationale_filter=args.rationale_filter,
     )
 
     model_name_or_path = resolve_model_name_or_path(
@@ -82,15 +91,18 @@ def main() -> None:
         args.model_name or model_config.get("pretrained_name", "HuggingFaceTB/SmolVLM-500M-Instruct"),
     )
 
-    stats = training_data_stats(train_examples)
+    stats = training_data_stats(train_examples, build_stats)
     print(f"config path: {ROOT / args.config}")
     print(f"model config path: {ROOT / args.model_config}")
     print(f"teacher cache path: {teacher_cache_path}")
     print(f"model name or path: {model_name_or_path}")
     print(f"mode: {args.mode}")
+    print(f"label_source: {args.label_source}")
+    print(f"rationale_filter: {args.rationale_filter}")
     print(f"full train image split size: {len(train_split)}")
     print(f"train size: {len(train_examples)}")
     print(f"class distribution: {dict(stats['class_distribution'])}")
+    print(f"num skipped missing teacher_answer: {stats['num_skipped_missing_teacher_answer']}")
     print(f"num usable rationales: {stats['num_usable_rationales']}")
     print(f"num missing teacher rows: {stats['num_missing_teacher_rows']}")
     print(f"per_device_train_batch_size: {args.per_device_train_batch_size}")
@@ -103,11 +115,17 @@ def main() -> None:
         raise RuntimeError("No training examples were built.")
 
     if args.dry_run:
+        print("dry_run: true")
+        print(f"first label target: {train_examples[0]['label_target']}")
+        first_rationale_row = next((row for row in train_examples if row.get("use_rationale")), None)
+        if first_rationale_row:
+            print(f"first rationale target: {first_rationale_row['rationale_target']}")
+        else:
+            print("first rationale target: none")
         processor = load_processor(model_name_or_path)
         collator = StepByStepDataCollator(processor=processor, mode=args.mode)
         preview_features = train_examples[: args.per_device_train_batch_size]
         preview_batch = collator(preview_features)
-        print("dry_run: true")
         print(f"preview batch examples: {len(preview_features)}")
         print(f"label input_ids shape: {tuple(preview_batch['label_batch']['input_ids'].shape)}")
         print(f"label labels shape: {tuple(preview_batch['label_batch']['labels'].shape)}")
@@ -296,9 +314,12 @@ def build_trainer_examples(
     dataset_config: dict,
     teacher_rows: list[dict],
     mode: str,
-) -> list[dict]:
+    label_source: str,
+    rationale_filter: str,
+) -> tuple[list[dict], dict]:
     teacher_by_cache_id = {row.get("cache_id"): row for row in teacher_rows}
     rows = []
+    num_skipped_missing_teacher_answer = 0
     for local_index in selected_indices:
         example = normalize_scienceqa_example(split_examples[local_index], dataset_config)
         gold_answer = example["answer_letter"]
@@ -309,7 +330,22 @@ def build_trainer_examples(
         teacher_row = teacher_by_cache_id.get(cache_id)
         teacher_answer = teacher_row.get("teacher_answer") if teacher_row else None
         teacher_reasoning = teacher_row.get("teacher_reasoning") if teacher_row else None
-        use_rationale = bool(teacher_reasoning and teacher_answer == gold_answer)
+        label_answer = gold_answer
+        if label_source == "teacher":
+            if not teacher_answer:
+                num_skipped_missing_teacher_answer += 1
+                continue
+            label_answer = teacher_answer
+
+        use_rationale = (
+            mode == "filtered_multitask"
+            and should_use_rationale(
+                teacher_reasoning=teacher_reasoning,
+                teacher_answer=teacher_answer,
+                gold_answer=gold_answer,
+                rationale_filter=rationale_filter,
+            )
+        )
 
         row = {
             "cache_id": cache_id,
@@ -319,8 +355,9 @@ def build_trainer_examples(
             "image": example["image"],
             "gold_answer": gold_answer,
             "teacher_answer": teacher_answer,
+            "label_source": label_source,
             "label_prompt": format_scienceqa_prompt(example, dataset_config, mode=_label_prompt_mode(mode)),
-            "label_target": format_answer_target(gold_answer),
+            "label_target": format_answer_target(label_answer),
             "use_rationale": use_rationale,
             "has_teacher_row": teacher_row is not None,
         }
@@ -332,7 +369,22 @@ def build_trainer_examples(
                 }
             )
         rows.append(row)
-    return rows
+    return rows, {"num_skipped_missing_teacher_answer": num_skipped_missing_teacher_answer}
+
+
+def should_use_rationale(
+    teacher_reasoning: str | None,
+    teacher_answer: str | None,
+    gold_answer: str,
+    rationale_filter: str,
+) -> bool:
+    if not teacher_reasoning:
+        return False
+    if rationale_filter == "teacher_matches_gold":
+        return teacher_answer == gold_answer
+    if rationale_filter == "none":
+        return True
+    raise ValueError(f"Unsupported rationale_filter: {rationale_filter}")
 
 
 def stratified_train_indices(split_examples, dataset_config: dict, train_size: int | None, seed: int) -> list[int]:
@@ -383,9 +435,10 @@ def stratified_train_indices(split_examples, dataset_config: dict, train_size: i
     return sorted(selected)
 
 
-def training_data_stats(rows: list[dict]) -> dict:
+def training_data_stats(rows: list[dict], build_stats: dict) -> dict:
     return {
         "class_distribution": dict(sorted(Counter(row["gold_answer"] for row in rows).items())),
+        "num_skipped_missing_teacher_answer": build_stats["num_skipped_missing_teacher_answer"],
         "num_usable_rationales": sum(1 for row in rows if row.get("use_rationale")),
         "num_missing_teacher_rows": sum(1 for row in rows if not row.get("has_teacher_row")),
     }
@@ -405,6 +458,8 @@ def run_config(
         "model_name": model_name_or_path,
         "teacher_cache_path": args.teacher_cache_path,
         "mode": args.mode,
+        "label_source": args.label_source,
+        "rationale_filter": args.rationale_filter,
         "train_size": args.train_size,
         "output_dir": args.output_dir,
         "learning_rate": args.learning_rate,
