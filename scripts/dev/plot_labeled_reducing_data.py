@@ -16,7 +16,9 @@ def main() -> None:
     args = parse_args()
     results_csv = Path(args.results_csv)
     if not results_csv.exists():
-        raise FileNotFoundError(f"Results CSV does not exist: {results_csv}. Run run_labeled_reducing_data.py first.")
+        raise FileNotFoundError(
+            f"Results CSV does not exist: {results_csv}. Run scripts/dev/run_labeled_reducing_data.py first."
+        )
 
     rows = _read_rows(results_csv)
     if not rows:

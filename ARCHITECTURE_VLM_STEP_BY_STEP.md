@@ -34,9 +34,12 @@ configs
 - `src/training/smolvlm_batching.py`: processor batching and label masking
 - `src/evaluation/parsing.py`: answer parsing utilities
 - `scripts/generate_teacher_cache.py`: teacher cache generation
-- `scripts/train_student.py`: answer-only and multitask training
+- `scripts/train_student_hf_trainer.py`: main Hugging Face Trainer-based
+  student training
 - `scripts/evaluate_student.py`: evaluation and prediction saving
-- `scripts/run_labeled_reducing_data.py`: small reducing-data comparison runner
+- `scripts/dev/train_student.py`: legacy batch-size-1 pilot training
+- `scripts/dev/run_labeled_reducing_data.py`: development reducing-data
+  comparison runner
 
 ## Why This Is Minimal
 

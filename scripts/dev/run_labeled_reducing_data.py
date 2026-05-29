@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 for relative in ["src/datasets", "src/evaluation", "src/teacher", "src/utils"]:
     sys.path.insert(0, str(ROOT / relative))
 
@@ -177,7 +177,7 @@ def _train_command(
 ) -> list[str]:
     command = [
         sys.executable,
-        "scripts/train_student.py",
+        "scripts/dev/train_student.py",
         "--config",
         args.config,
         "--model_config",

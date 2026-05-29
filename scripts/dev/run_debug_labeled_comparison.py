@@ -102,7 +102,7 @@ def main() -> None:
 def _train_command(args: argparse.Namespace, method: dict, checkpoint_dir: Path) -> list[str]:
     command = [
         sys.executable,
-        "scripts/train_student.py",
+        "scripts/dev/train_student.py",
         "--config",
         args.config,
         "--model_config",

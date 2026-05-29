@@ -57,34 +57,44 @@ Not implemented yet:
 ## Project Style
 
 - `src/configs/` holds readable experiment, dataset, model, and teacher configs
-- `scripts/` contains direct command-line entrypoints
+- `scripts/` contains the three main reproducible pipeline entrypoints
 - `scripts/dev/` contains inspection, smoke-test, and environment-check
-  utilities
+  utilities that are not required for the main pipeline
 - `src/datasets/` contains the small ScienceQA loader helper
 - `src/prompts/` contains prompt formatting for VLM step-by-step answers
 - `src/utils/` keeps simple shared helpers
 
 The code intentionally avoids registries, factories, dataclass-heavy config
-objects, callback stacks, and trainer frameworks.
+objects, and custom experiment frameworks.
 
-## Main Scripts
+## Main Pipeline
 
-- `scripts/generate_teacher_cache.py`: generate mock or Qwen teacher outputs
-  and save them as JSONL. Use `--resume` for long Qwen cache generation runs
-  so existing `cache_id` rows are skipped and new rows are appended safely.
-- `scripts/train_student.py`: train SmolVLM with answer-only or multitask
-  objectives.
-- `scripts/evaluate_student.py`: evaluate base models or saved checkpoints.
-- `scripts/run_labeled_reducing_data.py`: run answer-only vs multitask
-  comparisons for selected train sizes.
-- `scripts/analyze_predictions.py`: inspect prediction distributions,
-  parse failures, and common errors.
-- `scripts/plot_labeled_reducing_data.py`: plot accuracy vs train size.
+The reproducible pipeline has exactly three executable entrypoints:
+
+1. `scripts/generate_teacher_cache.py`: generates Qwen teacher answers and
+   rationales and saves them into a JSONL teacher cache.
+2. `scripts/train_student_hf_trainer.py`: trains the SmolVLM student model. It
+   supports gold-label fine-tuning, teacher-label distillation, and
+   step-by-step multitask distillation with rationales.
+3. `scripts/evaluate_student.py`: evaluates raw or trained SmolVLM models on
+   the ScienceQA validation split and saves metrics and predictions.
+
+Minimal flow:
+
+```text
+generate teacher cache -> train student -> evaluate student
+```
+
+## Development Utilities
+
+`scripts/dev/` contains legacy and development utilities such as inspection,
+smoke-test, analysis, plotting, and old pilot-training scripts. They are kept
+for debugging and historical pilot runs, but they are not required for the main
+reproducible pipeline.
 
 ## Verification Utilities
 
-These scripts are kept intentionally. They make the pipeline easier to inspect
-and debug:
+Useful development utilities include:
 
 - `scripts/dev/inspect_scienceqa.py`
 - `scripts/dev/inspect_teacher_cache.py`
@@ -93,6 +103,10 @@ and debug:
 - `scripts/dev/train_student_smoke.py`
 - `scripts/dev/check_vlm_environment.py`
 - `scripts/dev/run_debug_labeled_comparison.py`
+- `scripts/dev/analyze_predictions.py`
+- `scripts/dev/plot_labeled_reducing_data.py`
+- `scripts/dev/run_labeled_reducing_data.py`
+- `scripts/dev/train_student.py`
 
 ## Install
 
